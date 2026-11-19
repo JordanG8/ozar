@@ -1,0 +1,3 @@
+ALTER TABLE "review_logs" ADD COLUMN "judge" jsonb;--> statement-breakpoint
+ALTER TABLE "session_prompts" ADD COLUMN "judge_attempt" jsonb;--> statement-breakpoint
+CREATE INDEX "review_logs_judge_accepted" ON "review_logs" USING btree ("user_id","card_id",("judge"->>'cacheKey')) WHERE "review_logs"."judge"->>'status' = 'decided' AND "review_logs"."judge"->'output'->>'choice' IN ('correct', 'partial');

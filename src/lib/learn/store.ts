@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import { Pool } from "pg";
-import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, notExists, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { getNeonAuth } from "@/lib/neon-auth";
 import {
@@ -9,8 +10,9 @@ import {
 } from "@/lib/db/schema";
 import { recallEstimator, scheduleLearning, scheduleReview } from "./fsrs";
 import { dayStreak, infiniteKind, pickInfinite } from "./infinite";
+import { judgeModel, judgeTimeoutMs, type JudgeAttempt, type JudgeLog, type JudgeOutput } from "./judge-config";
 import { exampleParts, matchMeaning, normalize } from "./matcher";
-import type { AnswerInput, Feedback, InfiniteState, StudyState } from "./protocol";
+import type { AnswerInput, AnswerReceipt, Feedback, InfiniteState, MeaningInput, StudyState } from "./protocol";
 import { nextStage, rateAnswer, selectQueued } from "./queue";
 
 const makeDb = (source: string) => {
@@ -26,6 +28,8 @@ type Run = typeof learningRuns.$inferSelect;
 type Settings = typeof userSettings.$inferSelect;
 type Prompt = typeof sessionPrompts.$inferSelect;
 type Word = typeof words.$inferSelect;
+type DbReader = Pick<Transaction, "select">;
+type Mode = "learn" | "infinite";
 
 export class StudyConflict extends Error {}
 export class LearnerUnauthorized extends Error {}
@@ -156,7 +160,7 @@ async function stateForRun(tx: Transaction, settings: Settings, run?: Run): Prom
   state.hintLevel = prompt.hintLevel;
 
   if (kind === "intro") return { ...state, prompt: { kind, id: prompt.id, term: word.term, definition: word.definition, example: word.example } };
-  return { ...state, prompt: await showReviewPrompt(tx, { ...prompt, kind }, word) };
+  return { ...state, prompt: await showReviewPrompt(tx, { ...prompt, kind }, word), judgePending: waitingOn(prompt.judgeAttempt) };
 }
 
 async function showReviewPrompt(tx: Transaction, prompt: Prompt, word: Word): Promise<InfiniteState["prompt"]> {
@@ -177,12 +181,13 @@ export function openLearn(userId: string, start: boolean, deckId?: string) {
   });
 }
 
-async function getPrompt(tx: Transaction, userId: string, promptId: string, mode: "learn" | "infinite" = "learn") {
-  const [row] = await tx.select({ prompt: sessionPrompts, card: cards, word: words })
+async function getPrompt(tx: DbReader, userId: string, promptId: string, mode: Mode = "learn", lock = false) {
+  const query = tx.select({ prompt: sessionPrompts, card: cards, word: words })
     .from(sessionPrompts).innerJoin(cards, eq(cards.id, sessionPrompts.cardId))
     .innerJoin(words, eq(words.id, cards.wordId))
     .innerJoin(sessions, and(eq(sessions.id, sessionPrompts.sessionId), eq(sessions.userId, userId), eq(sessions.mode, mode)))
     .where(and(eq(sessionPrompts.id, promptId), eq(sessionPrompts.userId, userId))).limit(1);
+  const [row] = await (lock ? query.for("update", { of: sessionPrompts }) : query);
   if (!row) throw new StudyConflict();
   return row;
 }
@@ -203,7 +208,29 @@ export function revealHint(userId: string, promptId: string, level: number) {
   });
 }
 
-function gradeAnswer(prompt: Prompt, word: Word, input: AnswerInput) {
+const answerKey = (value: string) => value.normalize("NFC").trim().toLowerCase().replace(/\s+/gu, " ");
+
+async function rememberedAnswer(tx: DbReader, prompt: Prompt, alternatives: string[]) {
+  const keys = alternatives.map(answerKey);
+  if (!keys.length) return null;
+  const disputed = alias(reviewLogs, "disputed_answer");
+  const rows = await tx.select({ judge: reviewLogs.judge }).from(reviewLogs).where(and(
+    eq(reviewLogs.userId, prompt.userId), eq(reviewLogs.cardId, prompt.cardId),
+    sql`${reviewLogs.judge}->>'status' = 'decided' AND ${reviewLogs.judge}->'output'->>'choice' IN ('correct', 'partial')`,
+    inArray(sql<string>`${reviewLogs.judge}->>'cacheKey'`, keys),
+    notExists(tx.select({ id: disputed.promptId }).from(disputed).where(and(
+      eq(disputed.userId, prompt.userId), eq(disputed.cardId, prompt.cardId), eq(disputed.matcherDisputed, true),
+      sql`${disputed.judge}->>'cacheKey' = ${reviewLogs.judge}->>'cacheKey'`,
+    ))),
+  )).orderBy(desc(reviewLogs.reviewedAt)).limit(keys.length);
+  for (const [index, key] of keys.entries()) {
+    const cached = rows.find(({ judge }) => judge?.cacheKey === key)?.judge;
+    if (cached) return { ...cached, input: alternatives[index], status: "cached" as const, latencyMs: 0 };
+  }
+  return null;
+}
+
+async function gradeAnswer(tx: DbReader, prompt: Prompt, word: Word, input: AnswerInput) {
   const reversed = prompt.kind === "reverse_choice" && input.kind === "tap";
   const meaning = prompt.kind === "voice_meaning" && (input.kind === "typed" || input.kind === "voice" || input.kind === "skip");
   if (!reversed && !meaning) throw new StudyConflict();
@@ -211,13 +238,107 @@ function gradeAnswer(prompt: Prompt, word: Word, input: AnswerInput) {
   const alternatives = input.kind === "voice" ? input.alternatives : input.kind === "typed" ? [input.value] : [];
   const found = alternatives.map((value) => ({ value, match: matchMeaning(value, word.acceptedAnswers, word.definition) }))
     .find(({ match }) => match !== null);
-  if (input.kind === "voice" && !found && !input.final) return null;
+  const judge = found || !meaning ? null : await rememberedAnswer(tx, prompt, alternatives);
+  if (input.kind === "voice" && !found && !judge && !input.final) return null;
+  const match = found?.match ?? judge?.input;
   return {
-    correct: reversed ? input.choice === word.id : Boolean(found),
-    matched: reversed && input.choice === word.id ? word.term : found?.match ?? null,
-    transcript: found?.value ?? alternatives[0] ?? (reversed ? input.choice : null),
+    correct: reversed ? input.choice === word.id : Boolean(match),
+    matched: reversed && input.choice === word.id ? word.term : match ?? null,
+    transcript: found?.value ?? judge?.input ?? alternatives[0] ?? (reversed ? input.choice : null),
     input: reversed ? "tap" as const : input.kind === "voice" ? "voice" as const : "typed" as const,
+    judge,
   };
+}
+
+function waitingOn(attempt: JudgeAttempt | null): AnswerReceipt["judgePending"] {
+  if (!attempt) return;
+  return attempt.failure || Date.now() >= attempt.deadline ? "self_grade" : "checking";
+}
+
+type Resolution = { attempt: JudgeAttempt; judge: JudgeLog };
+
+async function completedReceipt(tx: DbReader, prompt: Prompt, word: Word): Promise<AnswerReceipt> {
+  const [log] = await tx.select().from(reviewLogs).where(and(
+    eq(reviewLogs.promptId, prompt.id), eq(reviewLogs.userId, prompt.userId),
+  ));
+  return {
+    accepted: true,
+    feedback: log ? answerFeedback(word, log.correct, log.matchedAnswer, log.judge) : null,
+    responseMs: log?.responseMs,
+  };
+}
+
+function answerFeedback(word: Word, correct: boolean, matched: string | null, judge: JudgeLog | null): Feedback {
+  return {
+    correct, matched, term: word.term, definition: word.definition, example: word.example,
+    ...(judge?.output && { decision: judge.output.choice }),
+  };
+}
+
+export async function submitMeaning(userId: string, promptId: string, input: MeaningInput, mode: Mode,
+  receivedAt: number, decide: (word: string, definition: string, text: string, signal: AbortSignal) => Promise<JudgeOutput>,
+): Promise<AnswerReceipt> {
+  const db = getDb();
+  const { prompt, word } = await getPrompt(db, userId, promptId, mode);
+  if (prompt.kind !== "voice_meaning") throw new StudyConflict();
+  if (prompt.completedAt) return completedReceipt(db, prompt, word);
+  if (prompt.judgeAttempt) return { accepted: false, feedback: null, judgePending: waitingOn(prompt.judgeAttempt) };
+  const text = input.kind === "typed" ? input.value : input.alternatives[0];
+  const immediate = await gradeAnswer(db, prompt, word, input);
+  if (immediate?.correct || /^לא יודע(?:ת|ימ|ות)?(?: |$)/u.test(normalize(text)) || !/[\p{L}\p{N}]/u.test(text)) {
+    return answerPrompt(userId, promptId, input, mode);
+  }
+
+  const attempt: JudgeAttempt = { model: judgeModel, input: input.kind, text, receivedAt, deadline: receivedAt + judgeTimeoutMs };
+  const scope = and(eq(sessionPrompts.id, promptId), eq(sessionPrompts.userId, userId), isNull(sessionPrompts.completedAt));
+  const [claimed] = await db.update(sessionPrompts).set({ judgeAttempt: attempt })
+    .where(and(scope, isNull(sessionPrompts.judgeAttempt))).returning({ id: sessionPrompts.id });
+  if (!claimed) {
+    const { prompt: current } = await getPrompt(db, userId, promptId, mode);
+    if (current.completedAt) return completedReceipt(db, current, word);
+    return { accepted: false, feedback: null, judgePending: waitingOn(current.judgeAttempt) };
+  }
+
+  const start = performance.now();
+  const remaining = attempt.deadline - Date.now();
+  const signal = AbortSignal.timeout(Math.max(1, remaining));
+  let output: JudgeOutput | undefined;
+  try {
+    if (remaining > 0) {
+      output = await Promise.race([
+        decide(word.term, word.definition, text, signal),
+        new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true })),
+      ]);
+    }
+  } catch (error) {
+    if (!signal.aborted) console.warn("Vocabulary judge unavailable", { type: error instanceof Error ? error.name : "unknown" });
+  }
+  const latencyMs = Math.round(performance.now() - start);
+  if (!output || Date.now() >= attempt.deadline) {
+    const failure = Date.now() >= attempt.deadline || signal.aborted ? "timeout" : "unavailable";
+    await db.update(sessionPrompts).set({ judgeAttempt: { ...attempt, failure, latencyMs } }).where(scope);
+    const { prompt: current } = await getPrompt(db, userId, promptId, mode);
+    if (current.completedAt) return completedReceipt(db, current, word);
+    return { accepted: false, feedback: null, judgePending: "self_grade" };
+  }
+  return answerPrompt(userId, promptId, input, mode, {
+    attempt, judge: { model: attempt.model, input: text, output, latencyMs, status: "decided", cacheKey: answerKey(text) },
+  });
+}
+
+export async function selfGradeMeaning(userId: string, promptId: string, correct: boolean, mode: Mode): Promise<AnswerReceipt> {
+  const db = getDb();
+  const { prompt, word } = await getPrompt(db, userId, promptId, mode);
+  if (prompt.kind !== "voice_meaning") throw new StudyConflict();
+  if (prompt.completedAt) return completedReceipt(db, prompt, word);
+  const attempt = prompt.judgeAttempt;
+  if (!attempt || waitingOn(attempt) === "checking") return { accepted: false, feedback: null, judgePending: "checking" };
+  return answerPrompt(userId, promptId, { kind: "typed", value: attempt.text }, mode, {
+    attempt, judge: {
+      model: attempt.model, input: attempt.text, output: null, latencyMs: attempt.latencyMs ?? Math.max(0, attempt.deadline - attempt.receivedAt),
+      status: attempt.failure ?? "timeout", cacheKey: answerKey(attempt.text), selfGrade: correct,
+    },
+  });
 }
 
 async function localDay(tx: Transaction, settings: Settings, now: Date) {
@@ -226,17 +347,16 @@ async function localDay(tx: Transaction, settings: Settings, now: Date) {
   return day.today;
 }
 
-export function answerPrompt(userId: string, promptId: string, input: AnswerInput, mode: "learn" | "infinite" = "learn") {
+export function answerPrompt(
+  userId: string, promptId: string, input: AnswerInput, mode: Mode = "learn", resolution?: Resolution,
+): Promise<AnswerReceipt> {
   return withLearner(userId, async (tx, settings) => {
-    const { prompt, card, word } = await getPrompt(tx, userId, promptId, mode);
-    function feedback(correct: boolean, matched: string | null): Feedback {
-      return { correct, matched, term: word.term, definition: word.definition, example: word.example };
-    }
-    if (prompt.completedAt) {
-      const [log] = await tx.select().from(reviewLogs).where(and(eq(reviewLogs.promptId, promptId), eq(reviewLogs.userId, userId)));
-      return { accepted: true, feedback: log ? feedback(log.correct, log.matchedAnswer) : null };
-    }
+    const { prompt, card, word } = await getPrompt(tx, userId, promptId, mode, true);
+    if (prompt.completedAt) return completedReceipt(tx, prompt, word);
+    if (resolution && (prompt.kind !== "voice_meaning" || prompt.judgeAttempt?.receivedAt !== resolution.attempt.receivedAt)) throw new StudyConflict();
+    if (!resolution && prompt.judgeAttempt) return { accepted: false, feedback: null, judgePending: waitingOn(prompt.judgeAttempt) };
     const now = new Date();
+    let responseMs: number | undefined;
     let result: Feedback | null = null;
     let correct = false;
     let next: ReturnType<typeof nextStage> = null;
@@ -244,16 +364,20 @@ export function answerPrompt(userId: string, promptId: string, input: AnswerInpu
       await tx.update(cards).set({ firstSeenAt: now, state: "learning" }).where(and(eq(cards.id, card.id), isNull(cards.firstSeenAt)));
       next = nextStage(prompt.kind, false, prompt.ordinal);
     } else {
-      const grade = gradeAnswer(prompt, word, input);
+      const grade = resolution ? {
+        correct: resolution.judge.selfGrade ?? (resolution.judge.output !== null && resolution.judge.output.choice !== "wrong"),
+        matched: resolution.judge.output && resolution.judge.output.choice !== "wrong" ? resolution.attempt.text : null,
+        transcript: resolution.attempt.text, input: resolution.attempt.input, judge: resolution.judge,
+      } : await gradeAnswer(tx, prompt, word, input);
       if (!grade) return { accepted: false, feedback: null };
       const { matched, transcript } = grade;
       correct = grade.correct;
-      const responseMs = Math.max(0, Math.min(86_400_000, now.getTime() - prompt.issuedAt.getTime()));
+      responseMs = Math.max(0, Math.min(86_400_000, (resolution?.attempt.receivedAt ?? +now) - +prompt.issuedAt));
       const history = await tx.select({ ms: reviewLogs.responseMs }).from(reviewLogs).where(and(
         eq(reviewLogs.userId, userId), eq(reviewLogs.correct, true), eq(reviewLogs.cardType, prompt.kind),
         gt(reviewLogs.responseMs, 0),
       )).orderBy(sql`${reviewLogs.reviewedAt} DESC`).limit(21);
-      const rating = rateAnswer(correct, prompt.hintLevel, responseMs, history.map(({ ms }) => ms));
+      const rating = rateAnswer(correct, Math.max(prompt.hintLevel, Number(grade.judge?.output?.choice === "partial")), responseMs, history.map(({ ms }) => ms));
       if (mode === "learn") next = nextStage(prompt.kind, correct, prompt.ordinal);
       const today = await localDay(tx, settings, now);
       const apply = mode === "learn" || card.state !== "review" || card.lastAnswerDay !== today;
@@ -272,7 +396,7 @@ export function answerPrompt(userId: string, promptId: string, input: AnswerInpu
       await tx.insert(reviewLogs).values({
         promptId, userId, sessionId: prompt.sessionId, cardId: card.id, mode, cardType: prompt.kind,
         input: grade.input, correct, rating, responseMs,
-        transcript, matchedAnswer: matched, appliedToFsrs: apply, reviewDay: today, reviewedAt: now,
+        transcript, matchedAnswer: matched, appliedToFsrs: apply, reviewDay: today, reviewedAt: now, judge: grade.judge,
         previousReviewAt: card.lastReviewAt, previousDue: card.due, previousState: card.state,
         previousStability: card.stability, previousDifficulty: card.difficulty, previousLearningStep: card.learningStep,
         elapsedDays: scheduled?.reviewElapsedDays ?? Math.max(0, (+now - +(card.lastReviewAt ?? now)) / 86_400_000),
@@ -280,7 +404,7 @@ export function answerPrompt(userId: string, promptId: string, input: AnswerInpu
       });
       if (scheduled) await tx.update(cards).set({ ...scheduled.updates, lastAnswerDay: today })
         .where(and(eq(cards.id, card.id), eq(cards.userId, userId)));
-      result = feedback(correct, matched);
+      result = answerFeedback(word, correct, matched, grade.judge);
     }
     const queueKey = and(eq(learningQueue.runId, prompt.sessionId), eq(learningQueue.cardId, card.id), eq(learningQueue.userId, userId));
     if (mode === "learn") {
@@ -288,7 +412,7 @@ export function answerPrompt(userId: string, promptId: string, input: AnswerInpu
       else await tx.delete(learningQueue).where(queueKey);
       await tx.update(learningRuns).set({ promptCount: prompt.ordinal }).where(and(eq(learningRuns.id, prompt.sessionId), eq(learningRuns.userId, userId)));
     }
-    await tx.update(sessionPrompts).set({ completedAt: now }).where(eq(sessionPrompts.id, promptId));
+    await tx.update(sessionPrompts).set({ completedAt: now, judgeAttempt: null }).where(eq(sessionPrompts.id, promptId));
     await tx.update(sessions).set({
       endedAt: now,
       durationMs: sql`least(2147483647, greatest(0, extract(epoch FROM (${now.toISOString()}::timestamptz - ${sessions.startedAt})) * 1000))::integer`,
@@ -304,7 +428,7 @@ export function answerPrompt(userId: string, promptId: string, input: AnswerInpu
         )`,
       }),
     }).where(and(eq(sessions.id, prompt.sessionId), eq(sessions.userId, userId)));
-    return { accepted: true, feedback: result };
+    return { accepted: true, feedback: result, responseMs };
   });
 }
 
@@ -343,7 +467,7 @@ export function openInfinite(userId: string, sessionId: string): Promise<Infinit
       const [pending] = await tx.select({ prompt: sessionPrompts, word: words }).from(sessionPrompts)
         .innerJoin(cards, eq(cards.id, sessionPrompts.cardId)).innerJoin(words, eq(words.id, cards.wordId))
         .where(and(eq(sessionPrompts.userId, userId), eq(sessionPrompts.sessionId, sessionId), isNull(sessionPrompts.completedAt))).limit(1);
-      if (pending) return { ...state, prompt: await showReviewPrompt(tx, pending.prompt, pending.word) };
+      if (pending) return { ...state, prompt: await showReviewPrompt(tx, pending.prompt, pending.word), judgePending: waitingOn(pending.prompt.judgeAttempt) };
     }
     const candidates = await tx.select().from(cards).where(and(eq(cards.userId, userId), isNotNull(cards.firstSeenAt)));
     if (!candidates.length) return state;

@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as pgDrizzle } from "drizzle-orm/pglite";
-import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint } from "./store";
+import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint, selfGradeMeaning, submitMeaning } from "./store";
+import { judgeTimeoutMs } from "./judge-config";
 import { randomUUID } from "node:crypto";
 import { saveDeck, listDecks } from "../import/decks";
 import { getSessionDetails, listSessions } from "../sessions";
@@ -21,6 +22,7 @@ beforeAll(async () => {
   vi.stubEnv("DATABASE_URL", "postgresql://local/ozar_test");
   await postgres.exec(await readFile("drizzle/0001_vocabulary_trainer.sql", "utf8"));
   await postgres.exec(await readFile("drizzle/0002_infinite_practice.sql", "utf8"));
+  await postgres.exec(await readFile("drizzle/0003_meaning_judge.sql", "utf8"));
   const deck = await postgres.query("INSERT INTO decks (kind, name) VALUES ('builtin', 'אוצר') RETURNING id");
   builtIn = deck.rows[0].id;
   for (const [index, word] of source.slice(0, 37).entries()) {
@@ -179,4 +181,69 @@ it("stores and exports private imported decks and protects data when identity de
   await deleteAccount(userId, async () => {});
   expect(await exportData(userId)).toMatchObject({ learner: null, decks: [], words: [], cards: [], sessions: [] });
   expect((await listDecks("different-user")).map(({ id }) => id)).toContain(builtIn);
+});
+
+const paraphrase = "אבן שאיתה משחיזים סכינים להיות חדים יותר";
+
+async function firstInfinitePrompt(userId) {
+  const { prompt } = await openLearn(userId, true);
+  await answerPrompt(userId, prompt.id, { kind: "continue" });
+  return (await openInfinite(userId, randomUUID())).prompt;
+}
+
+it("grades a paraphrase once, caps partial ratings, and keeps its exact reuse private", async () => {
+  const user = "judge-partial";
+  const prompt = await firstInfinitePrompt(user);
+  const input = { kind: "voice", alternatives: [paraphrase], final: true };
+  expect(await answerPrompt(user, prompt.id, { ...input, final: false }, "infinite")).toMatchObject({ accepted: false });
+  let finish;
+  const judge = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+  const first = submitMeaning(user, prompt.id, input, "infinite", Date.now(), judge);
+  await vi.waitFor(() => expect(judge).toHaveBeenCalledTimes(1));
+  expect(await submitMeaning(user, prompt.id, input, "infinite", Date.now(), judge)).toMatchObject({ judgePending: "checking" });
+  expect(await selfGradeMeaning(user, prompt.id, false, "infinite")).toMatchObject({ judgePending: "checking" });
+  finish({ choice: "partial", probabilities: { correct: .1, partial: .85, wrong: .05 } });
+  expect(await first).toMatchObject({ feedback: { correct: true, decision: "partial", matched: paraphrase, definition: source[0].definition } });
+  expect(judge).toHaveBeenCalledWith(source[0].term, source[0].definition, paraphrase, expect.any(AbortSignal));
+  const [firstLog] = (await exportData(user)).reviews;
+  expect(firstLog).toMatchObject({ rating: "hard", judge: { model: "google/gemini-decision-1", input: paraphrase,
+    status: "decided", output: { choice: "partial" }, latencyMs: expect.any(Number) } });
+
+  const repeated = (await openInfinite(user, randomUUID())).prompt;
+  expect(await answerPrompt(user, repeated.id, { ...input, final: false }, "infinite")).toMatchObject({
+    feedback: { decision: "partial", correct: true, matched: paraphrase },
+  });
+  const cached = (await exportData(user)).reviews.find(({ promptId }) => promptId === repeated.id);
+  expect(cached).toMatchObject({ rating: "hard", judge: { status: "cached", latencyMs: 0 } });
+  await markMatcherDispute(user, repeated.id, true);
+  const afterDispute = (await openInfinite(user, randomUUID())).prompt;
+  expect(await answerPrompt(user, afterDispute.id, { ...input, final: false }, "infinite")).toMatchObject({ accepted: false });
+
+  const other = await firstInfinitePrompt("judge-other");
+  expect(await answerPrompt("judge-other", other.id, { ...input, final: false }, "infinite")).toMatchObject({ accepted: false });
+  await expect(submitMeaning("judge-other", prompt.id, input, "infinite", Date.now(), judge)).rejects.toThrow();
+  expect(judge).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a timed-out answer pending, and records its one-tap grade without remembering it", async () => {
+  const user = "judge-timeout";
+  const prompt = await firstInfinitePrompt(user);
+  const input = { kind: "typed", value: paraphrase };
+  const never = vi.fn(() => new Promise(() => {}));
+  const receipt = await submitMeaning(user, prompt.id, input, "infinite", Date.now() - judgeTimeoutMs + 100, never);
+  expect(receipt).toMatchObject({ accepted: false, feedback: null, judgePending: "self_grade" });
+  expect(never).toHaveBeenCalledTimes(1);
+  expect((await exportData(user)).reviews).toHaveLength(0);
+  expect(await selfGradeMeaning(user, prompt.id, true, "infinite")).toMatchObject({ accepted: true, feedback: { correct: true } });
+  expect(await selfGradeMeaning(user, prompt.id, false, "infinite")).toMatchObject({ accepted: true, feedback: { correct: true } });
+  expect((await exportData(user)).reviews[0]).toMatchObject({ transcript: paraphrase, judge: {
+    status: "timeout", selfGrade: true, output: null,
+  } });
+  const next = (await openInfinite(user, randomUUID())).prompt;
+  expect(await answerPrompt(user, next.id, { kind: "voice", alternatives: [paraphrase], final: false }, "infinite"))
+    .toMatchObject({ accepted: false });
+  const wrong = vi.fn(async () => ({ choice: "wrong" }));
+  expect(await submitMeaning(user, next.id, input, "infinite", Date.now(), wrong))
+    .toMatchObject({ feedback: { correct: false, decision: "wrong", definition: source[0].definition } });
+  expect((await exportData(user)).reviews.find(({ promptId }) => promptId === next.id)).toMatchObject({ rating: "again" });
 });

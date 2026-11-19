@@ -9,10 +9,12 @@ interface Recognition extends EventTarget {
   continuous: boolean;
   maxAlternatives: number;
   start(): void;
+  stop(): void;
   abort(): void;
   onresult: ((event: { resultIndex: number; results: ArrayLike<RecognitionResult> }) => void) | null;
   onstart: (() => void) | null;
   onend: (() => void) | null;
+  onspeechend: (() => void) | null;
   onerror: ((event: { error: string }) => void) | null;
 }
 type SpeechWindow = Window & {
@@ -23,13 +25,14 @@ type SpeechWindow = Window & {
 export function useSpeech(
   promptId: string | null,
   enabled: boolean,
-  onSpeech: (alternatives: string[], final: boolean) => void,
+  onSpeech: (alternatives: string[], ended: boolean) => void,
 ) {
   const [listening, setListening] = useState(false);
   const [speechError, setSpeechError] = useState("");
   const instance = useRef<Recognition | null>(null);
   const restarts = useRef(0);
   const retry = useRef<number | undefined>(undefined);
+  const boundary = useRef<number | undefined>(undefined);
   const listener = useRef(onSpeech);
 
   useEffect(() => {
@@ -38,6 +41,7 @@ export function useSpeech(
 
   const stop = useCallback(() => {
     window.clearTimeout(retry.current);
+    window.clearTimeout(boundary.current);
     const recognition = instance.current;
     instance.current = null;
     if (recognition) {
@@ -45,6 +49,7 @@ export function useSpeech(
       recognition.onstart = null;
       recognition.onerror = null;
       recognition.onend = null;
+      recognition.onspeechend = null;
       recognition.abort();
     }
     setListening(false);
@@ -65,16 +70,29 @@ export function useSpeech(
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 5;
-    let heardFinal = false;
+    let latest: string[] = [];
+    let submitted = false;
     let retryable = true;
+    function submitUtterance() {
+      if (submitted || !latest.length) return;
+      submitted = true;
+      listener.current(latest, true);
+    }
     recognition.onstart = () => setListening(true);
     recognition.onresult = ({ results, resultIndex }) => {
       const result = results[resultIndex];
-      if (!result) return;
-      const alternatives = Array.from(result, ({ transcript }) => transcript.trim().slice(0, 300)).filter(Boolean);
+      if (!result || submitted) return;
+      const previous = Array.from({ length: resultIndex }, (_, index) => results[index]?.[0]?.transcript ?? "").join(" ").trim();
+      const alternatives = Array.from(result, ({ transcript }) =>
+        [previous, transcript.trim()].filter(Boolean).join(" ").slice(0, 300)).filter(Boolean);
       if (!alternatives.length) return;
-      heardFinal ||= result.isFinal;
-      listener.current(alternatives, result.isFinal);
+      latest = alternatives;
+      listener.current(alternatives, false);
+    };
+    recognition.onspeechend = () => {
+      // Give the recognizer a brief chance to revise the last interim result.
+      window.clearTimeout(boundary.current);
+      boundary.current = window.setTimeout(submitUtterance, 140);
     };
     recognition.onerror = ({ error }) => {
       if (error === "aborted" || error === "no-speech") return;
@@ -83,9 +101,11 @@ export function useSpeech(
     };
     recognition.onend = () => {
       if (instance.current !== recognition) return;
+      window.clearTimeout(boundary.current);
       instance.current = null;
       setListening(false);
-      if (!heardFinal && retryable && restarts.current < 3) {
+      if (retryable) submitUtterance();
+      if (!submitted && retryable && restarts.current < 3) {
         restarts.current++;
         retry.current = window.setTimeout(listen, 400);
       }
@@ -99,6 +119,10 @@ export function useSpeech(
     }
   }, []);
 
+  const finish = useCallback(() => {
+    if (instance.current) instance.current.stop();
+  }, []);
+
   useEffect(() => {
     restarts.current = 0;
     // Schedule the first attempt so discarded Strict Mode renders never open the mic.
@@ -109,5 +133,5 @@ export function useSpeech(
     };
   }, [enabled, promptId, start, stop]);
 
-  return { listening, speechError, start, stop };
+  return { listening, speechError, start, stop, finish };
 }

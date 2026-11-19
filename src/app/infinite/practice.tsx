@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import type { AnswerInput, Feedback, InfiniteState } from "@/lib/learn/protocol";
-import { Example, Microphone, request, type Receipt } from "../learn/study";
+import { decisionNudge, type AnswerInput, type AnswerReceipt, type Feedback, type InfiniteState, type MeaningInput } from "@/lib/learn/protocol";
+import { Example, Microphone } from "../learn/study";
+import { JudgeControls } from "../learn/judge-controls";
+import { request } from "../learn/request";
+import { useJudge } from "../learn/use-judge";
 import { useSpeech } from "../learn/use-speech";
 import study from "../learn/study.module.css";
 import styles from "./practice.module.css";
@@ -62,6 +65,7 @@ export function Practice() {
   const prompt = state?.prompt;
   const voice = prompt?.kind === "voice_meaning" ? prompt.id : null;
   const useTyping = typed ?? state?.inputDefault === "typed";
+  const { pending: judgePending, selfBusy, reset: resetJudge, submit: requestJudge } = useJudge("infinite");
 
   const next = useCallback(async () => {
     if (open.current) return;
@@ -72,6 +76,7 @@ export function Practice() {
       session.current ??= crypto.randomUUID();
       const upcoming = await call<InfiniteState>({ action: "next", sessionId: session.current });
       active.current = upcoming.prompt?.id ?? null;
+      resetJudge(upcoming.prompt?.id, upcoming.judgePending);
       queue.current = [];
       lastHeard.current = "";
       setState(upcoming);
@@ -87,7 +92,7 @@ export function Practice() {
       open.current = false;
       setLoading(false);
     }
-  }, []);
+  }, [resetJudge]);
 
   useEffect(() => {
     void next();
@@ -97,13 +102,13 @@ export function Practice() {
 
   useEffect(() => {
     if (!feedback?.correct) return;
-    const timer = window.setTimeout(() => void next(), 800);
+    const timer = window.setTimeout(() => void next(), feedback.decision === "partial" ? 2000 : 800);
     return () => window.clearTimeout(timer);
   }, [feedback, next]);
 
   useEffect(() => {
-    if (useTyping && voice && !feedback) inputField.current?.focus();
-  }, [useTyping, voice, feedback]);
+    if (useTyping && voice && !feedback && !judgePending) inputField.current?.focus();
+  }, [useTyping, voice, feedback, judgePending]);
 
   useEffect(() => {
     function unlock() {
@@ -126,6 +131,32 @@ export function Practice() {
     };
   }, []);
 
+  function accept(id: string, receipt: AnswerReceipt, wasVoice: boolean) {
+    if (!state || !receipt.feedback || active.current !== id) return;
+    active.current = null;
+    resetJudge();
+    queue.current = [];
+    const correct = receipt.feedback.correct;
+    const combo = correct ? state.combo + 1 : 0;
+    playFeedback(audio.current, correct, combo);
+    setState({
+      ...state, combo, best: Math.max(state.best, combo),
+      answers: state.answers + 1, correct: state.correct + Number(correct), today: state.today + 1,
+      averageMs: (state.averageMs * state.answers + (receipt.responseMs ?? Math.max(0, Date.now() - cardStart))) / (state.answers + 1),
+    });
+    if (wasVoice) setJudgment({ promptId: id, disputed: false, correct });
+    setFeedback(receipt.feedback);
+  }
+
+  async function submitMeaning(input: MeaningInput | { kind: "self"; correct: boolean }) {
+    if (!voice || active.current !== voice) return;
+    setError("");
+    try {
+      const receipt = await requestJudge(voice, input);
+      if (receipt) accept(voice, receipt, input.kind === "voice" || (input.kind === "self" && !useTyping));
+    } catch (cause) { setError(message(cause)); }
+  }
+
   async function submit(input: AnswerInput) {
     if (!state || !prompt || active.current !== prompt.id) return;
     queue.current.push({ id: prompt.id, input });
@@ -136,20 +167,8 @@ export function Practice() {
       while (queue.current.length) {
         const pending = queue.current.shift()!;
         if (active.current !== pending.id) continue;
-        const receipt = await call<Receipt>({ action: "answer", promptId: pending.id, input: pending.input });
-        if (!receipt.feedback || active.current !== pending.id) continue;
-        active.current = null;
-        queue.current = [];
-        const correct = receipt.feedback.correct;
-        const combo = correct ? state.combo + 1 : 0;
-        playFeedback(audio.current, correct, combo);
-        setState({
-          ...state, combo, best: Math.max(state.best, combo),
-          answers: state.answers + 1, correct: state.correct + Number(correct), today: state.today + 1,
-          averageMs: (state.averageMs * state.answers + Math.max(0, Date.now() - cardStart)) / (state.answers + 1),
-        });
-        if (pending.input.kind === "voice") setJudgment({ promptId: pending.id, disputed: false, correct });
-        setFeedback(receipt.feedback);
+        const receipt = await call<AnswerReceipt>({ action: "answer", promptId: pending.id, input: pending.input });
+        accept(pending.id, receipt, pending.input.kind === "voice");
       }
     } catch (cause) {
       queue.current = [];
@@ -160,21 +179,26 @@ export function Practice() {
     }
   }
 
-  function heard(alternatives: string[], final: boolean) {
+  function heard(alternatives: string[], ended: boolean) {
     if (feedback && !feedback.correct) {
       void next();
       return;
     }
     if (!voice || active.current !== voice) return;
-    const key = JSON.stringify([alternatives, final]);
+    if (ended) {
+      queue.current = [];
+      void submitMeaning({ kind: "voice", alternatives, final: true });
+      return;
+    }
+    const key = JSON.stringify(alternatives);
     if (lastHeard.current === key) return;
     lastHeard.current = key;
     setSpoken(alternatives[0]);
-    void submit({ kind: "voice", alternatives, final });
+    void submit({ kind: "voice", alternatives, final: false });
   }
 
   const speech = useSpeech(voice ? `${voice}-${feedback ? "continue" : "answer"}` : null,
-    Boolean(voice && !useTyping && !feedback?.correct && !loading), heard);
+    Boolean(voice && !useTyping && !feedback?.correct && !loading && !judgePending), heard);
 
   async function flag() {
     if (!judgment || flagging) return;
@@ -192,7 +216,7 @@ export function Practice() {
 
   function typeAnswer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (value.trim()) void submit({ kind: "typed", value });
+    if (value.trim()) void submitMeaning({ kind: "typed", value });
   }
 
   const accuracy = state?.answers ? `${Math.round(state.correct / state.answers * 100)}%` : "—";
@@ -228,12 +252,14 @@ export function Practice() {
         <div className={styles.card} onClick={missed ? () => { speech.stop(); void next(); } : undefined}>
           {feedback ? <>
             <p role="status" className={feedback.correct ? study.correct : study.wrong}>
-              {feedback.correct ? (milestones.includes(state?.combo ?? 0) ? `${state?.combo} תשובות נכונות ברצף` : "נכון") : "התשובה"}
+              {feedback.decision === "partial" ? "נכון חלקית" : feedback.correct
+                ? (milestones.includes(state?.combo ?? 0) ? `${state?.combo} תשובות נכונות ברצף` : "נכון") : "התשובה"}
             </p>
             <h1>{feedback.term}</h1>
             {feedback.correct && feedback.matched && feedback.matched !== feedback.term &&
               <p className={study.correct}>{feedback.matched}</p>}
             <p className={study.definition}>{feedback.definition}</p>
+            {feedback.decision && decisionNudge(feedback.decision) && <p className={study.example}>{decisionNudge(feedback.decision)}</p>}
             {missed && <Example example={feedback.example} term={feedback.term} />}
           </> : prompt?.kind === "voice_meaning" ? <>
             <p className={study.label}>מה המשמעות?</p><h1>{prompt.term}</h1>
@@ -250,7 +276,7 @@ export function Practice() {
 
       <div className={styles.controls}>
         {error ? <p className={study.wrong} role="alert">{error}</p>
-          : voice && !useTyping && !feedback ? <p className={study.status} role="status">
+          : voice && !useTyping && !feedback && !judgePending ? <p className={study.status} role="status">
             {spoken || (speech.listening ? "מקשיב…" : speech.speechError)}
           </p> : null}
         {feedback ? <button type="button" className={study.primary} disabled={loading}
@@ -261,13 +287,15 @@ export function Practice() {
             {prompt.choices.map((choice) => <button className={study.secondary} key={choice.id} type="button"
               onClick={() => void submit({ kind: "tap", choice: choice.id })}>{choice.term}</button>)}
           </div>
+          : judgePending ? <JudgeControls pending={judgePending} busy={selfBusy}
+            onGrade={(correct) => void submitMeaning({ kind: "self", correct })} />
           : voice ? <>
             {useTyping ? <form className={study.typed} onSubmit={typeAnswer}>
               <label htmlFor="practice-answer">התשובה שלך</label>
               <input id="practice-answer" ref={inputField} maxLength={300} value={value} onChange={(event) => setValue(event.target.value)} />
               <button className={study.primary} type="submit" disabled={!value.trim()}>בדיקה</button>
             </form> : <button className={styles.mic} aria-pressed={speech.listening} data-listening={speech.listening}
-              onClick={() => speech.listening ? speech.stop() : speech.start()}>
+              onClick={() => speech.listening ? speech.finish() : speech.start()}>
               <Microphone />{speech.listening ? "עצירת הקלטה" : "מענה בקול"}
             </button>}
             <div className={study.actions}>

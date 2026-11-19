@@ -3,24 +3,14 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { exampleParts } from "@/lib/learn/matcher";
-import type { AnswerInput, Feedback, StudyState } from "@/lib/learn/protocol";
+import { decisionNudge, type AnswerInput, type AnswerReceipt, type Feedback, type MeaningInput, type StudyState } from "@/lib/learn/protocol";
+import { JudgeControls } from "./judge-controls";
+import { request } from "./request";
+import { useJudge } from "./use-judge";
 import { useSpeech } from "./use-speech";
 import styles from "./study.module.css";
 
 type Hint = { hintLevel: number; example: string | null; letters: string | null };
-export type Receipt = { accepted: boolean; feedback: Feedback | null };
-
-export async function request<T>(body: object): Promise<T> {
-  const response = await fetch("/api/learn", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (response.status === 401) throw new Error("פג תוקף הכניסה. יש לרענן את הדף ולהתחבר מחדש.");
-  if (response.status === 409) throw new Error("התרגול השתנה בחלון אחר. יש לרענן את הדף כדי להמשיך.");
-  if (!response.ok) throw new Error("החיבור נקטע. אפשר לנסות שוב.");
-  return response.json();
-}
 
 export function Example({ example, term }: { example: string | null; term: string }) {
   if (!example) return null;
@@ -60,6 +50,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   const speechInFlight = useRef(false);
   const speechPending = useRef<{ promptId: string; input: AnswerInput } | null>(null);
   const lastSpoken = useRef("");
+  const judge = useJudge("learn");
 
   function showError(cause: unknown) {
     setError(cause instanceof Error ? cause.message : "אירעה תקלה. אפשר לנסות שוב.");
@@ -68,6 +59,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   async function show(action: "start" | "next") {
     const data = await request<StudyState>({ action, deckId });
     active.current = data.prompt?.id ?? null;
+    judge.reset(data.prompt?.id, data.judgePending);
     speechPending.current = null;
     lastSpoken.current = "";
     setState(data);
@@ -82,6 +74,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
 
   function accept(result: Feedback) {
     active.current = null;
+    judge.reset();
     speechPending.current = null;
     setFeedback(result);
   }
@@ -93,20 +86,34 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     try { await action(); } catch (cause) { showError(cause); } finally { setBusy(false); }
   }
 
-  async function processSpeech(alternatives: string[], final: boolean) {
+  async function submitMeaning(input: MeaningInput | { kind: "self"; correct: boolean }) {
     if (!voicePrompt || active.current !== voicePrompt) return;
-    const key = JSON.stringify([alternatives, final]);
+    setError("");
+    try {
+      const result = await judge.submit(voicePrompt, input);
+      if (result?.feedback && active.current === voicePrompt) accept(result.feedback);
+    } catch (cause) { showError(cause); }
+  }
+
+  async function processSpeech(alternatives: string[], ended: boolean) {
+    if (!voicePrompt || active.current !== voicePrompt) return;
+    if (ended) {
+      speechPending.current = null;
+      await submitMeaning({ kind: "voice", alternatives, final: true });
+      return;
+    }
+    const key = JSON.stringify(alternatives);
     if (lastSpoken.current === key) return;
     lastSpoken.current = key;
     setSpoken(alternatives[0]);
-    speechPending.current = { promptId: voicePrompt, input: { kind: "voice", alternatives, final } };
+    speechPending.current = { promptId: voicePrompt, input: { kind: "voice", alternatives, final: false } };
     if (speechInFlight.current) return;
     speechInFlight.current = true;
     try {
       while (speechPending.current) {
         const pending = speechPending.current;
         speechPending.current = null;
-        const result = await request<Receipt>({ action: "answer", ...pending });
+        const result = await request<AnswerReceipt>({ action: "answer", ...pending });
         if (result.feedback && active.current === pending.promptId) accept(result.feedback);
       }
     } catch (cause) {
@@ -117,12 +124,12 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     }
   }
 
-  const speech = useSpeech(voicePrompt, Boolean(voicePrompt && speechReady && !useTyping && !feedback), processSpeech);
+  const speech = useSpeech(voicePrompt, Boolean(voicePrompt && speechReady && !useTyping && !feedback && !judge.pending), processSpeech);
 
   async function submit(input: AnswerInput) {
     if (!prompt) return;
     speech.stop();
-    const result = await request<Receipt>({ action: "answer", promptId: prompt.id, input });
+    const result = await request<AnswerReceipt>({ action: "answer", promptId: prompt.id, input });
     if (result.feedback) accept(result.feedback);
     else if (result.accepted) await show("next");
   }
@@ -132,17 +139,18 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   }, [state, feedback]);
 
   useEffect(() => {
-    if (useTyping && voicePrompt) field.current?.focus();
-  }, [useTyping, voicePrompt]);
+    if (useTyping && voicePrompt && !judge.pending && !feedback) field.current?.focus();
+  }, [useTyping, voicePrompt, judge.pending, feedback]);
 
   function submitTyped(event: FormEvent) {
     event.preventDefault();
-    if (value.trim()) void run(() => submit({ kind: "typed", value }));
+    if (value.trim()) void submitMeaning({ kind: "typed", value });
   }
 
   const hintLevel = hint?.hintLevel ?? state?.hintLevel ?? 0;
   const progressed = state ? state.total - state.remaining : 0;
-  const status = error || (speech.listening ? "מקשיב…" : spoken || (voicePrompt && !useTyping ? speech.speechError : ""));
+  const status = error || (!judge.pending && !feedback
+    ? speech.listening ? "מקשיב…" : spoken || (voicePrompt && !useTyping ? speech.speechError : "") : "");
 
   return (
     <main className={styles.shell}>
@@ -168,12 +176,13 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
         ) : feedback ? (
           <>
             <p className={feedback.correct ? styles.correct : styles.wrong}>
-              {feedback.correct ? "תשובה נכונה" : "נתרגל את המילה שוב"}
+              {feedback.decision === "partial" ? "תשובה נכונה חלקית" : feedback.correct ? "תשובה נכונה" : "נתרגל את המילה שוב"}
             </p>
             <h1 ref={title} tabIndex={-1}>{feedback.term}</h1>
             {feedback.correct && feedback.matched && feedback.matched !== feedback.term &&
               <p className={styles.correct}>{feedback.matched}</p>}
             <p className={styles.definition}>{feedback.definition}</p>
+            {feedback.decision && decisionNudge(feedback.decision) && <p className={styles.example}>{decisionNudge(feedback.decision)}</p>}
             <Example example={feedback.example} term={feedback.term} />
           </>
         ) : !prompt ? (
@@ -221,13 +230,15 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
             {prompt.choices.map((choice) => <button className={styles.secondary} key={choice.id} disabled={busy}
               onClick={() => void run(() => submit({ kind: "tap", choice: choice.id }))}>{choice.term}</button>)}
           </div>
+          : judge.pending ? <JudgeControls pending={judge.pending} busy={judge.selfBusy}
+            onGrade={(correct) => void submitMeaning({ kind: "self", correct })} />
           : <>
             {useTyping ? <form className={styles.typed} onSubmit={submitTyped}>
               <label htmlFor="meaning">התשובה שלך</label>
               <input id="meaning" ref={field} value={value} onChange={(event) => setValue(event.target.value)} maxLength={300} />
               <button className={styles.primary} disabled={busy || !value.trim()} type="submit">בדיקה</button>
             </form> : <button className={styles.mic} data-listening={speech.listening} disabled={busy}
-              aria-pressed={speech.listening} onClick={() => speech.listening ? speech.stop() : speech.start()}>
+              aria-pressed={speech.listening} onClick={() => speech.listening ? speech.finish() : speech.start()}>
               <Microphone />
               {speech.listening ? "עצירת הקלטה" : "מענה בקול"}
             </button>}

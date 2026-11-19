@@ -26,7 +26,11 @@ npx playwright install chromium --only-shell
 npm run test:e2e
 ```
 
-Vitest tests the scheduler, Hebrew matcher, and spreadsheet parser. The database tests run against PGlite. Playwright exercises the production build over HTTP with a disposable PGlite database and a local email-code auth fixture. GitHub Actions runs the same checks.
+Vitest tests the scheduler, Hebrew matcher, and spreadsheet parser. The database tests run against PGlite. Playwright exercises the production build over HTTP with a disposable PGlite database and local fixtures for email-code auth and AI Gateway. GitHub Actions runs the same checks.
+
+## Meaning judge
+
+The deterministic matcher handles live speech results. On submission or speech end, unmatched answers go to Gemini Decision 1 through Vercel AI Gateway. The app sends the term, definition, and submitted text. The judge function runs in Frankfurt and uses Vercel OIDC. Accepted paraphrases are remembered for the current account and word. Partial grades count as correct and receive at most Hard. When the judge times out, the learner can grade the card manually.
 
 ## Session metrics
 

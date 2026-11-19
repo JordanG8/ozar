@@ -28,6 +28,14 @@ const auth = createServer(async (request, response) => {
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 
   switch (url.pathname) {
+    case "/gateway/decision-model":
+      if (request.headers["ai-model-id"] !== "google/gemini-decision-1" || body.questions?.verdict?.type !== "choice") {
+        return send(400, { error: { message: "Invalid decision request" } });
+      }
+      if (JSON.stringify(body.stateParts).includes("מבחן פסק זמן")) {
+        await new Promise((resolve) => setTimeout(resolve, 3700));
+      }
+      return send(200, { answers: { verdict: { type: "choice", choice: "correct" } } });
     case "/auth/get-session":
       return send(200, current ?? null);
     case "/auth/email-otp/send-verification-otp":
@@ -88,6 +96,8 @@ const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "star
     DATABASE_URL: `postgresql://postgres:postgres@${host}:${dbPort}/postgres?sslmode=disable`,
     NEON_AUTH_BASE_URL: `http://${host}:${authPort}/auth`,
     NEON_AUTH_COOKIE_SECRET: "local-fixture-signing-secret-user-sessions-only",
+    OZAR_AI_GATEWAY_BASE_URL: `http://${host}:${authPort}/gateway`,
+    AI_GATEWAY_API_KEY: "local-fixture-gateway-key",
     NEXT_TELEMETRY_DISABLED: "1",
   },
 });

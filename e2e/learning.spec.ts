@@ -102,3 +102,57 @@ test("imports a private CSV, exports the learner's data, and deletes the fixture
   await expect(page.getByRole("button", { name: "התחלה או המשך" })).toBeVisible();
   await expect(page.getByLabel("חפיסה ללימוד")).toHaveCount(0);
 });
+
+test("judges an interim speech transcript at speech end and permits a single-tap timeout grade", async ({ page }) => {
+  await page.addInitScript(() => {
+    class SpeechFixture {
+      onstart?: () => void;
+      onresult?: (event: { resultIndex: number; results: ArrayLike<unknown> }) => void;
+      onspeechend?: () => void;
+      start() {
+        Object.assign(window, { fixtureSpeech: this });
+        queueMicrotask(() => this.onstart?.());
+      }
+      abort() {}
+      stop() { this.onspeechend?.(); }
+    }
+    Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: SpeechFixture });
+  });
+  await signIn(page, "/learn", "spoken-judge@example.test");
+  await page.getByRole("button", { name: "התחלה או המשך" }).click();
+  await page.getByRole("button", { name: "להמשך", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
+  await page.goto("/infinite");
+  await expect(page.getByRole("button", { name: "עצירת הקלטה" })).toBeVisible();
+  const paraphrase = "אבן שאיתה משחיזים סכינים להיות חדים יותר";
+  let judgeRequests = 0;
+  page.on("request", (request) => { if (request.url().endsWith("/api/judge")) judgeRequests++; });
+  const interim = page.waitForResponse((response) => response.url().endsWith("/api/learn") &&
+    response.request().postDataJSON()?.input?.final === false);
+  await page.evaluate((transcript) => {
+    const speech = (window as unknown as {
+      fixtureSpeech: { onresult: (event: { resultIndex: number; results: unknown[] }) => void };
+    }).fixtureSpeech;
+    speech.onresult({ resultIndex: 0, results: [{ 0: { transcript }, length: 1, isFinal: false }] });
+  }, paraphrase);
+  expect((await (await interim).json()).accepted).toBe(false);
+  expect(judgeRequests).toBe(0);
+  await page.evaluate(() => {
+    (window as unknown as { fixtureSpeech: { onspeechend: () => void } }).fixtureSpeech.onspeechend();
+  });
+  await expect(page.getByText(deck[0].definition, { exact: true })).toBeVisible();
+  expect(judgeRequests).toBe(1);
+
+  await page.getByRole("button", { name: "מענה בהקלדה" }).click();
+  await page.getByLabel("התשובה שלך").fill("מבחן פסק זמן");
+  await page.getByRole("button", { name: "בדיקה", exact: true }).click();
+  const self = page.getByRole("button", { name: "ידעתי", exact: true });
+  await expect(self).toBeVisible({ timeout: 5000 });
+  await self.click();
+  await expect(page.getByText("נכון", { exact: true })).toBeVisible();
+  const data = await (await page.request.post("/api/settings", { data: { action: "export" } })).json();
+  expect(data.reviews).toEqual(expect.arrayContaining([
+    expect.objectContaining({ judge: expect.objectContaining({ model: "google/gemini-decision-1", status: "decided", input: paraphrase }) }),
+    expect.objectContaining({ judge: expect.objectContaining({ status: "timeout", selfGrade: true }) }),
+  ]));
+});

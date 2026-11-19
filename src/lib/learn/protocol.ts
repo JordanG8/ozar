@@ -9,6 +9,7 @@ export type StudyState = {
   total: number;
   inputDefault: "voice" | "typed";
   hintLevel: number;
+  judgePending?: "checking" | "self_grade";
 };
 
 export type Feedback = {
@@ -17,7 +18,23 @@ export type Feedback = {
   term: string;
   definition: string;
   example: string | null;
+  decision?: JudgeVerdict;
 };
+
+export type JudgeVerdict = "correct" | "partial" | "wrong";
+export type MeaningInput = Extract<AnswerInput, { kind: "typed" | "voice" }>;
+export type AnswerReceipt = {
+  accepted: boolean;
+  feedback: Feedback | null;
+  judgePending?: "checking" | "self_grade";
+  responseMs?: number;
+};
+
+export function decisionNudge(verdict: JudgeVerdict) {
+  if (verdict === "partial") return "הכיוון נכון. כדאי לבדוק איזה פרט חסר בתשובה.";
+  if (verdict === "wrong") return "התשובה לא התאימה למשמעות שבכרטיס. כדאי לשים לב להבדל.";
+  return null;
+}
 
 export type InfiniteState = {
   prompt: Exclude<StudyPrompt, { kind: "intro" }> | null;
@@ -31,6 +48,7 @@ export type InfiniteState = {
   today: number;
   goal: number;
   streak: number;
+  judgePending?: "checking" | "self_grade";
 };
 
 export type AnswerInput =

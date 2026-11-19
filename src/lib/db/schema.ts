@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { JudgeAttempt, JudgeLog } from "../learn/judge-config";
 import {
   boolean, check, date, doublePrecision, foreignKey, index, integer, jsonb,
   pgEnum, pgTable, primaryKey, smallint, text, timestamp, unique, uniqueIndex, uuid,
@@ -157,6 +158,7 @@ export const sessionPrompts = pgTable("session_prompts", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   hintLevel: smallint("hint_level").default(0).notNull(),
   choiceWordIds: uuid("choice_word_ids").array(),
+  judgeAttempt: jsonb("judge_attempt").$type<JudgeAttempt>(),
 }, (table) => [
   unique("session_prompts_session_ordinal").on(table.sessionId, table.ordinal),
   unique("session_prompts_user_session_card_id").on(table.userId, table.sessionId, table.cardId, table.id),
@@ -207,6 +209,7 @@ export const reviewLogs = pgTable("review_logs", {
   scheduledDays: doublePrecision("scheduled_days").notNull(),
   difficultyForSession: doublePrecision("difficulty_for_session").notNull(),
   matcherDisputed: boolean("matcher_disputed").default(false).notNull(),
+  judge: jsonb("judge").$type<JudgeLog>(),
 }, (table) => [
   foreignKey({
     name: "review_logs_user_prompt_fk",
@@ -216,6 +219,8 @@ export const reviewLogs = pgTable("review_logs", {
   index("review_logs_user_reviewed").on(table.userId, table.reviewedAt.desc()),
   index("review_logs_session_correct").on(table.sessionId, table.correct, table.reviewedAt),
   index("review_logs_user_card_reviewed").on(table.userId, table.cardId, table.reviewedAt.desc()),
+  index("review_logs_judge_accepted").on(table.userId, table.cardId, sql`(${table.judge}->>'cacheKey')`)
+    .where(sql`${table.judge}->>'status' = 'decided' AND ${table.judge}->'output'->>'choice' IN ('correct', 'partial')`),
   check("review_logs_response_nonnegative", sql`${table.responseMs} >= 0`),
   check("review_logs_ratings_match_result", sql`${table.correct} = (${table.rating} <> 'again')`),
   check("review_logs_input_matches_prompt", sql`
