@@ -1,5 +1,5 @@
 import { getNeonAuth } from "@/lib/neon-auth";
-import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint, StudyConflict } from "@/lib/learn/store";
+import { answerPrompt, LearnerUnauthorized, markMatcherDispute, openInfinite, openLearn, revealHint, StudyConflict } from "@/lib/learn/store";
 import type { AnswerInput } from "@/lib/learn/protocol";
 
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
     }
     return invalid();
   } catch (error) {
+    if (error instanceof LearnerUnauthorized) return Response.json({ error: "unauthenticated" }, { status: 401 });
     if (error instanceof StudyConflict) return Response.json({ error: "conflict" }, { status: 409 });
     console.error("Learn request failed", { type: error instanceof Error ? error.name : "unknown" });
     return Response.json({ error: "unavailable" }, { status: 503 });

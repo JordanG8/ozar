@@ -19,6 +19,7 @@ function Menu() {
         <Link className={styles.practice} href="/infinite">תרגול רציף</Link>
         <Link className={styles.practice} href="/sessions">יומן תרגול</Link>
         <Link className={styles.practice} href="/decks/import">ייבוא מילים</Link>
+        <Link className={styles.practice} href="/settings">הגדרות</Link>
       </nav>
     </main>
   );

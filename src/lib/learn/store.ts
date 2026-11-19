@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import { Pool } from "@neondatabase/serverless";
 import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-serverless";
+import { getNeonAuth } from "@/lib/neon-auth";
 import {
   appUsers, cards, decks, learningQueue, learningRuns, reviewLogs, sessionPrompts,
   sessions, userSettings, words,
@@ -21,6 +22,7 @@ type Prompt = typeof sessionPrompts.$inferSelect;
 type Word = typeof words.$inferSelect;
 
 export class StudyConflict extends Error {}
+export class LearnerUnauthorized extends Error {}
 
 export function getDb() {
   const connectionString = process.env.DATABASE_URL ?? process.env.DATABASE_URL_UNPOOLED;
@@ -30,12 +32,24 @@ export function getDb() {
 
 export async function withLearner<T>(userId: string, run: (tx: Transaction, settings: Settings) => Promise<T>) {
   return getDb().transaction(async (tx) => {
-    await tx.insert(appUsers).values({ id: userId }).onConflictDoNothing();
-    await tx.select({ id: appUsers.id }).from(appUsers).where(eq(appUsers.id, userId)).for("update");
+    await lockLearner(tx, userId);
+    const [existing] = await tx.select({ id: appUsers.id }).from(appUsers).where(eq(appUsers.id, userId));
+    if (!existing) {
+      // A stale signed session must not recreate the learner after account deletion.
+      const auth = getNeonAuth();
+      if (auth && (await auth.getSession({ query: { disableCookieCache: "true" } })).data?.user.id !== userId) {
+        throw new LearnerUnauthorized();
+      }
+      await tx.insert(appUsers).values({ id: userId }).onConflictDoNothing();
+    }
     await tx.insert(userSettings).values({ userId }).onConflictDoNothing();
     const [settings] = await tx.select().from(userSettings).where(eq(userSettings.userId, userId));
     return run(tx, settings);
   });
+}
+
+export async function lockLearner(tx: Transaction, userId: string) {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId}::text, 0))`);
 }
 
 function getActiveRun(tx: Transaction, userId: string, deckId?: string) {

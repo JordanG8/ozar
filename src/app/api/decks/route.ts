@@ -1,7 +1,7 @@
 import { getNeonAuth } from "@/lib/neon-auth";
 import { saveDeck } from "@/lib/import/decks";
 import { cleanImportWord, maxImportBytes, maxImportRows } from "@/lib/import/rows";
-import { StudyConflict } from "@/lib/learn/store";
+import { LearnerUnauthorized, StudyConflict } from "@/lib/learn/store";
 
 const invalid = () => Response.json({ error: "invalid" }, { status: 400 });
 
@@ -26,6 +26,7 @@ export async function POST(request: Request) {
       new Set(entries.map((word) => JSON.stringify([word?.term, word?.definition]))).size !== entries.length) return invalid();
     return Response.json(await saveDeck(user.id, id, name.trim(), entries.filter((word) => word !== null)), { status: 201 });
   } catch (error) {
+    if (error instanceof LearnerUnauthorized) return Response.json({ error: "unauthenticated" }, { status: 401 });
     if (error instanceof StudyConflict) return Response.json({ error: "conflict" }, { status: 409 });
     console.error("Deck import failed", { type: error instanceof Error ? error.name : "unknown" });
     return Response.json({ error: "unavailable" }, { status: 503 });

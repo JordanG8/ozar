@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 const runtime = vi.hoisted(() => ({ db: null }));
 vi.mock("drizzle-orm/neon-serverless", () => ({ drizzle: () => runtime.db }));
+vi.mock("@/lib/neon-auth", () => ({ getNeonAuth: () => null }));
 const postgres = new PGlite();
 const source = JSON.parse(await readFile("data/builtin-words.json", "utf8"));
 const expected = new Map(source.map((word) => [word.term.normalize("NFC"), word]));
