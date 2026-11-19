@@ -1,6 +1,7 @@
 {
   "buildCommand": "npm run build:vercel",
   "functions": {
-    "src/app/api/judge/route.ts": { "regions": ["fra1"], "maxDuration": 15 }
+    "src/app/api/judge/route.ts": { "regions": ["fra1"], "maxDuration": 15 },
+    "src/app/api/transcribe/route.ts": { "regions": ["fra1"], "maxDuration": 15 }
   }
 }

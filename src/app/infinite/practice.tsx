@@ -295,6 +295,7 @@ export function Practice() {
               disabled={speech.finishing} onClick={() => speech.recording ? speech.finish() : speech.start()}>
               <Microphone />{speech.finishing ? "מסיים זיהוי…" : speech.recording ? "עצירת הקלטה" : "מענה בקול"}
             </button>}
+            {!useTyping && speech.showTranscriptionNotice && <p className={study.status}>הקלטות קצרות נשלחות לתמלול.</p>}
             <div className={study.actions}>
               <button type="button" onClick={() => {
                 speech.stop();

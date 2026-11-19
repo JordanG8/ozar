@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQuietSpeech } from "./use-quiet-speech";
 
 type RecognitionResult = { isFinal: boolean; length: number; [index: number]: { transcript: string } };
 interface Recognition extends EventTarget {
@@ -23,7 +24,7 @@ type SpeechWindow = Window & {
   webkitSpeechRecognition?: new () => Recognition;
 };
 
-export function useSpeech(
+function useBrowserSpeech(
   promptId: string | null,
   enabled: boolean,
   onSpeech: (alternatives: string[], ended: boolean) => void,
@@ -134,6 +135,26 @@ export function useSpeech(
     };
   }, [enabled, promptId, start, stop]);
 
+  return { phase, speechError, start, stop, finish };
+}
+
+function isAndroid() {
+  return /Android/iu.test(navigator.userAgent) ||
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform === "Android";
+}
+
+const subscribe = () => () => {};
+const serverPlatform = () => null;
+
+export function useSpeech(
+  promptId: string | null,
+  enabled: boolean,
+  onSpeech: (alternatives: string[], ended: boolean) => void,
+) {
+  const android = useSyncExternalStore(subscribe, isAndroid, serverPlatform);
+  const browser = useBrowserSpeech(promptId, enabled && android === false, onSpeech);
+  const quiet = useQuietSpeech(promptId, enabled && android === true, (text) => onSpeech([text], true));
+  const { phase, ...controls } = android ? quiet : browser;
   const currentPhase = enabled ? phase : "off";
   return {
     listening: currentPhase === "listening",
@@ -141,6 +162,7 @@ export function useSpeech(
     finishing: currentPhase === "finishing",
     micStatus: currentPhase === "opening" ? "פותח מיקרופון…" :
       currentPhase === "listening" ? "המיקרופון פעיל" : "המיקרופון כבוי",
-    speechError, start, stop, finish,
+    ...controls,
+    showTranscriptionNotice: android === true && quiet.needsActivation,
   };
 }

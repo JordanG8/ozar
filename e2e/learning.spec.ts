@@ -207,3 +207,53 @@ test("stops listening on a wrong answer and lets the learner restart after silen
   await expect(micOn).toBeVisible();
   expect(await started()).toBe(3);
 });
+
+test("Android captures a quiet clip, releases the mic, and grades its transcription", async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeAudioContext = AudioContext;
+    Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Linux; Android 14) Chrome/152.0" });
+    const probe = { nativeStarts: 0, streams: [] as MediaStream[] };
+    Object.assign(window, { quietProbe: probe });
+    Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: class {
+      start() { probe.nativeStarts++; }
+      abort() {}
+    } });
+    navigator.mediaDevices.getUserMedia = async () => {
+      const context = new NativeAudioContext();
+      await context.resume();
+      const output = context.createMediaStreamDestination();
+      const tone = context.createOscillator();
+      const gain = context.createGain();
+      gain.gain.value = 0.25;
+      tone.connect(gain).connect(output);
+      tone.start(context.currentTime + 0.1);
+      tone.stop(context.currentTime + 0.45);
+      probe.streams.push(output.stream);
+      output.stream.getTracks().forEach((track) => {
+        const stop = track.stop.bind(track);
+        track.stop = () => { stop(); void context.close(); };
+      });
+      return output.stream;
+    };
+  });
+  await signIn(page, "/learn", "quiet-android@example.test");
+  await page.getByRole("button", { name: "התחלה או המשך" }).click();
+  await page.getByRole("button", { name: "להמשך", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
+  await page.goto("/infinite");
+  await expect(page.getByText("הקלטות קצרות נשלחות לתמלול.")).toBeVisible();
+  const probe = () => page.evaluate(() => {
+    const { nativeStarts, streams } = (window as unknown as {
+      quietProbe: { nativeStarts: number; streams: MediaStream[] };
+    }).quietProbe;
+    return { nativeStarts, tracks: streams.flatMap((stream) => stream.getTracks().map((track) => track.readyState)) };
+  });
+  expect(await probe()).toEqual({ nativeStarts: 0, tracks: [] });
+  const transcription = page.waitForResponse((response) => response.url().endsWith("/api/transcribe"));
+  await page.getByRole("button", { name: "מענה בקול", exact: true }).click();
+  await expect(page.getByText("המיקרופון פעיל", { exact: true })).toBeVisible();
+  expect((await transcription).status()).toBe(200);
+  await expect(page.getByText(deck[0].definition, { exact: true })).toBeVisible();
+  await expect(page.getByText("המיקרופון כבוי", { exact: true })).toBeVisible();
+  expect(await probe()).toEqual({ nativeStarts: 0, tracks: ["ended"] });
+});

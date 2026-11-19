@@ -28,6 +28,15 @@ const auth = createServer(async (request, response) => {
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 
   switch (url.pathname) {
+    case "/gateway/transcription-model": {
+      const audio = Buffer.from(body.audio ?? "", "base64");
+      if (request.headers["ai-model-id"] !== "openai/gpt-transcribe" || body.mediaType !== "audio/wav" ||
+        body.providerOptions?.openai?.languages?.[0] !== "he" || audio.toString("ascii", 0, 4) !== "RIFF" ||
+        audio.readUInt32LE(24) !== 16000) {
+        return send(400, { error: { message: "Invalid Hebrew audio request" } });
+      }
+      return send(200, { text: "אבן לחידוד סכינים" });
+    }
     case "/gateway/decision-model":
       if (request.headers["ai-model-id"] !== "google/gemini-decision-1" || body.questions?.verdict?.type !== "choice") {
         return send(400, { error: { message: "Invalid decision request" } });

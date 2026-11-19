@@ -243,6 +243,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
               <Microphone />
               {speech.finishing ? "מסיים זיהוי…" : speech.recording ? "עצירת הקלטה" : "מענה בקול"}
             </button>}
+            {!useTyping && speech.showTranscriptionNotice && <p className={styles.status}>הקלטות קצרות נשלחות לתמלול.</p>}
             <div className={styles.actions}>
               <button disabled={busy} onClick={() => { speech.stop(); setSpoken(""); setTyped(!useTyping); }}>
                 {useTyping ? "מענה בקול" : "מענה בהקלדה"}
