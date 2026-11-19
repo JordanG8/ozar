@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 
 const auth = createAuthClient();
 
-export function SignInCheck({ signedIn }: { signedIn: boolean }) {
+export function SignInCheck({ signedIn, callbackPath = "/setup-check" }: { signedIn: boolean; callbackPath?: "/setup-check" | "/learn" }) {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [sent, setSent] = useState(false);
@@ -18,7 +18,7 @@ export function SignInCheck({ signedIn }: { signedIn: boolean }) {
     try {
       await action();
     } catch {
-      setStatus("הבדיקה נכשלה. אפשר לנסות שוב.");
+      setStatus("הפעולה נכשלה. אפשר לנסות שוב.");
     } finally {
       setBusy(false);
     }
@@ -62,7 +62,7 @@ export function SignInCheck({ signedIn }: { signedIn: boolean }) {
           <button disabled={busy} onClick={() => run(async () => {
             const { error } = await auth.signIn.social({
               provider: "google",
-              callbackURL: new URL("/setup-check", window.location.origin).href,
+              callbackURL: new URL(callbackPath, window.location.origin).href,
             });
             if (error) throw error;
           })}>כניסה עם Google</button>
