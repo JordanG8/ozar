@@ -1,13 +1,17 @@
 "use client";
 
 import { createAuthClient } from "@neon/auth/next";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Preferences } from "@/lib/settings";
-import styles from "../manage.module.css";
-import study from "../learn/study.module.css";
+import { Icon } from "../icons";
+import { SectionLabel } from "../ui";
+import ui from "../ui.module.css";
+import styles from "./settings.module.css";
 
 const auth = createAuthClient();
+type Field = "newPerDay" | "dailyGoal" | "inputDefault" | "desiredRetention";
 
 async function request(action: string, payload: object = {}) {
   const response = await fetch("/api/settings", {
@@ -19,34 +23,71 @@ async function request(action: string, payload: object = {}) {
   return response;
 }
 
-export function SettingsForm({ preferences, email }: { preferences: Preferences; email: string }) {
+function valid(preferences: Preferences) {
+  const { newPerDay, dailyGoal } = preferences;
+  return Number.isInteger(newPerDay) && newPerDay >= 0 && newPerDay <= 2000 &&
+    Number.isInteger(dailyGoal) && dailyGoal >= 1 && dailyGoal <= 10000;
+}
+
+function Stepper({ id, value, step, min, max, onChange }: {
+  id: string; value: number; step: number; min: number; max: number; onChange: (value: number) => void;
+}) {
+  const clamp = (next: number) => Math.min(max, Math.max(min, next));
+  return <div className={styles.stepper}>
+    <button type="button" aria-label="הפחתה" disabled={value <= min} onClick={() => onChange(clamp(value - step))}><Icon name="minus" /></button>
+    <input id={id} type="number" inputMode="numeric" min={min} max={max} step="1" value={Number.isNaN(value) ? "" : value}
+      onChange={(event) => onChange(event.target.value === "" ? Number.NaN : Number(event.target.value))} />
+    <button type="button" aria-label="הוספה" disabled={value >= max} onClick={() => onChange(clamp(value + step))}><Icon name="plus" /></button>
+  </div>;
+}
+
+export function SettingsForm({ preferences: initial, email }: { preferences: Preferences; email: string }) {
   const router = useRouter();
+  const [preferences, setPreferences] = useState(initial);
+  const [saved, setSaved] = useState<Field | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState("");
+  const latest = useRef(initial);
+  const sequence = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
+  const chain = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!saved) return;
+    const hide = window.setTimeout(() => setSaved(null), 2000);
+    return () => window.clearTimeout(hide);
+  }, [saved]);
+
+  function change<K extends Field>(field: K, value: Preferences[K]) {
+    const next = { ...latest.current, [field]: value };
+    latest.current = next;
+    setPreferences(next);
+    setSaved(null);
+    window.clearTimeout(timer.current);
+    if (!valid(next)) return;
+    const ticket = ++sequence.current;
+    timer.current = window.setTimeout(() => {
+      chain.current = chain.current.then(async () => {
+        try {
+          await request("save", { preferences: latest.current });
+          if (ticket === sequence.current) { setError(""); setSaved(field); }
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "השמירה נכשלה.");
+        }
+      });
+    }, field === "newPerDay" || field === "dailyGoal" ? 350 : 150);
+  }
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
-    setStatus("");
     setError("");
     try { await action(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "אירעה תקלה. אפשר לנסות שוב."); }
     finally { setBusy(false); }
-  }
-
-  function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const fields = new FormData(event.currentTarget);
-    const preferences = {
-      newPerDay: Number(fields.get("new")),
-      dailyGoal: Number(fields.get("goal")),
-      inputDefault: fields.get("input"),
-      desiredRetention: Number(fields.get("retention")) / 100,
-    };
-    void run(async () => { await request("save", { preferences }); setStatus("ההגדרות נשמרו."); });
   }
 
   async function download() {
@@ -59,48 +100,74 @@ export function SettingsForm({ preferences, email }: { preferences: Preferences;
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  return <>
-    <form className={styles.form} onSubmit={save}>
-      <label>מילים חדשות ביום<input type="number" name="new" min="0" max="2000" step="1" required defaultValue={preferences.newPerDay} /></label>
-      <label>יעד תשובות יומי<input type="number" name="goal" min="1" max="10000" step="1" required defaultValue={preferences.dailyGoal} /></label>
-      <label>מענה כברירת מחדל<select name="input" defaultValue={preferences.inputDefault}>
-        <option value="voice">דיבור</option><option value="typed">הקלדה</option>
-      </select></label>
-      <label>שיעור זכירה רצוי באחוזים<input type="number" name="retention" min="1" max="99" step="0.1"
-        required defaultValue={Number((preferences.desiredRetention * 100).toFixed(1))} /></label>
-      <button type="submit" className={study.primary} disabled={busy}>שמירת הגדרות</button>
-    </form>
-    <section className={styles.section}>
-      <h2>החשבון שלי</h2>
-      <p className={styles.muted}><bdi>{email}</bdi></p>
-      <div className={styles.action}>
-        <button className={styles.linkButton} type="button" disabled={busy} onClick={() => void run(download)}>הורדת הנתונים שלי</button>
-        <button className={styles.linkButton} type="button" disabled={busy} onClick={() => void run(async () => {
-          const { error } = await auth.signOut();
-          if (error) throw new Error("היציאה נכשלה. אפשר לנסות שוב.");
-          router.replace("/?menu=1");
-          router.refresh();
-        })}>יציאה מהחשבון</button>
+  const savedMark = (field: Field): ReactNode => saved === field
+    ? <span className={styles.saved} role="status">נשמר</span> : null;
+  const retention = Math.round(preferences.desiredRetention * 100);
+
+  return <div className={ui.body}>
+    <SectionLabel>למידה</SectionLabel>
+    <div className={`${ui.row} ${styles.row}`}>
+      <span><label htmlFor="new-per-day">מילים חדשות ביום</label>{savedMark("newPerDay")}</span>
+      <Stepper id="new-per-day" value={preferences.newPerDay} step={5} min={0} max={2000} onChange={(value) => change("newPerDay", value)} />
+    </div>
+    <div className={`${ui.row} ${styles.row}`}>
+      <span><label htmlFor="daily-goal">יעד יומי <span className={ui.meta}>בתשובות</span></label>{savedMark("dailyGoal")}</span>
+      <Stepper id="daily-goal" value={preferences.dailyGoal} step={10} min={1} max={10000} onChange={(value) => change("dailyGoal", value)} />
+    </div>
+    <fieldset className={`${ui.row} ${styles.row} ${styles.fieldset}`}>
+      <legend className="visually-hidden">קלט ברירת מחדל</legend>
+      <span><span aria-hidden="true">קלט ברירת מחדל</span>{savedMark("inputDefault")}</span>
+      <div className={styles.segment}>
+        {([["voice", "קול"], ["typed", "מקלדת"]] as const).map(([value, label]) => <label key={value}>
+          <input type="radio" name="input" value={value} checked={preferences.inputDefault === value}
+            onChange={() => change("inputDefault", value)} />{label}
+        </label>)}
       </div>
-      {confirming ? <form className={styles.form} onSubmit={(event) => {
-        event.preventDefault();
-        if (confirmation.trim() !== email) return;
-        void run(async () => {
-          await request("delete", { email, confirmed: true });
-          router.replace("/?menu=1");
-          router.refresh();
-        });
-      }}>
-        <p className={study.wrong}>המחיקה קבועה ותכלול את החשבון, החפיסות המיובאות והיסטוריית התרגול.</p>
-        <label>הקלידו את כתובת הדוא״ל לאישור<input type="email" dir="ltr" required value={confirmation}
-          onChange={(event) => setConfirmation(event.target.value)} /></label>
-        <div className={styles.action}>
-          <button className={styles.linkButton} type="submit" disabled={busy || confirmation.trim() !== email}>מחיקת החשבון לצמיתות</button>
-          <button className={styles.linkButton} type="button" disabled={busy} onClick={() => { setConfirming(false); setConfirmation(""); }}>ביטול</button>
-        </div>
-      </form> : <button className={styles.linkButton} type="button" disabled={busy} onClick={() => setConfirming(true)}>מחיקת חשבון</button>}
-    </section>
-    {error && <p role="alert" className={study.wrong}>{error}</p>}
-    {status && <p role="status" className={study.correct}>{status}</p>}
-  </>;
+    </fieldset>
+    <div className={styles.slider}>
+      <div className={styles.sliderHead}>
+        <span><label htmlFor="retention">שימור רצוי</label>{savedMark("desiredRetention")}</span>
+        <strong><bdi>{retention}%</bdi></strong>
+      </div>
+      <input id="retention" type="range" min="70" max="97" step="1" value={retention}
+        style={{ "--fill": `${(retention - 70) / 27 * 100}%` } as CSSProperties}
+        onChange={(event) => change("desiredRetention", Number(event.target.value) / 100)} />
+      <p className={ui.meta}>גבוה יותר = זוכרים יותר, ויותר חזרות ביום</p>
+    </div>
+
+    <SectionLabel>נתונים</SectionLabel>
+    <Link className={ui.row} href="/decks/import"><span>ייבוא מילים</span><span className={ui.rowIcon}><Icon name="chevron" size={18} /></span></Link>
+    <button type="button" className={ui.row} disabled={busy} onClick={() => void run(download)}>
+      <span>ייצוא הנתונים שלי</span><span className={ui.rowIcon}><Icon name="download" /></span>
+    </button>
+
+    <SectionLabel>חשבון</SectionLabel>
+    <div className={ui.row}><span className={ui.rowValue}><bdi>{email}</bdi></span></div>
+    <button type="button" className={ui.row} disabled={busy} onClick={() => void run(async () => {
+      const { error } = await auth.signOut();
+      if (error) throw new Error("היציאה נכשלה. אפשר לנסות שוב.");
+      router.replace("/?menu=1");
+      router.refresh();
+    })}><span>התנתקות</span></button>
+    {confirming ? <form className={styles.confirm} onSubmit={(event) => {
+      event.preventDefault();
+      if (confirmation.trim() !== email) return;
+      void run(async () => {
+        await request("delete", { email, confirmed: true });
+        router.replace("/?menu=1");
+        router.refresh();
+      });
+    }}>
+      <p className={ui.error}>המחיקה קבועה ותכלול את החשבון, החפיסות המיובאות והיסטוריית התרגול.</p>
+      <label className={ui.label}>הקלידו את כתובת הדוא״ל לאישור
+        <input className={ui.field} type="email" dir="ltr" required value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)} />
+      </label>
+      <button className={styles.danger} type="submit" disabled={busy || confirmation.trim() !== email}>מחיקת החשבון לצמיתות</button>
+      <button className={ui.quiet} type="button" disabled={busy} onClick={() => { setConfirming(false); setConfirmation(""); }}>ביטול</button>
+    </form> : <button type="button" className={`${ui.row} ${styles.deleteRow}`} disabled={busy} onClick={() => setConfirming(true)}>
+      <span>מחיקת חשבון</span>
+    </button>}
+    {error && <p role="alert" className={`${ui.error} ${styles.message}`}>{error}</p>}
+  </div>;
 }

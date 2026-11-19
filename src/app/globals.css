@@ -4,21 +4,38 @@
   --surface: #1a1a18;
   --line: #2a2a26;
   --ink: #eee9df;
-  --muted: #a49e92;
+  --dim: #8c877c;
+  --faint: #5a5650;
   --accent: #f2c14e;
   --correct: #7fd49a;
+  --partial: #d6b874;
   --wrong: #e8735a;
+  /* Kept for older selectors; the design names this tone "dim". */
+  --muted: var(--dim);
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --column: 30rem;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
   background: var(--background);
   color: var(--ink);
-  font: 1rem/1.5 "Assistant Variable", Arial, sans-serif;
+  font: 1.0625rem/1.6 "Assistant Variable", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
 }
-h1, p { margin: 0; }
+h1, h2, h3, p { margin: 0; }
 a { color: inherit; text-decoration: none; }
-button, input { font: inherit; }
+button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-button:disabled { opacity: .55; cursor: default; }
+button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+::selection { background: var(--accent); color: var(--background); }
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

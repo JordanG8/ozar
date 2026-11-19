@@ -1,0 +1,128 @@
+/* Shared primitives for the "dark ritual" design: one phone-width column, hairlines, no boxes. */
+.screen {
+  width: min(100%, var(--column));
+  min-height: 100svh;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bar {
+  flex: none;
+  min-height: 5.5rem;
+  display: flex;
+  align-items: flex-end;
+  gap: .25rem;
+  padding: max(.75rem, env(safe-area-inset-top)) .75rem 1rem;
+}
+.barTitle { flex: 1; min-height: 2.75rem; display: flex; align-items: center; font-size: 1.0625rem; font-weight: 700; }
+.iconButton {
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  transition: color 150ms var(--ease), background 150ms var(--ease);
+}
+.iconButton:hover { background: var(--surface); }
+.iconButton:disabled { color: var(--faint); background: none; }
+.quietIcon { color: var(--dim); }
+.body { flex: 1; display: flex; flex-direction: column; padding: 0 1.5rem; }
+.footer { flex: none; display: flex; flex-direction: column; align-items: center; gap: .25rem; padding: 1rem 1.5rem 2rem; }
+.lede { color: var(--dim); font-size: 1.0625rem; line-height: 1.6; }
+.meta { color: var(--dim); font-size: .8125rem; line-height: 1.4; }
+.section {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: .5rem;
+  color: var(--dim);
+  font-size: .8125rem;
+  font-weight: 600;
+}
+.row {
+  min-height: 3.5rem;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.0625rem;
+  font-weight: 500;
+}
+.row > :first-child { flex: 1; }
+a.row, button.row { width: 100%; padding: 0; background: none; border-inline: 0; border-top: 0; text-align: start; transition: background 120ms var(--ease); }
+a.row:active, button.row:active { background: var(--surface); }
+.rowValue { color: var(--dim); }
+.rowIcon { display: flex; color: var(--dim); }
+.primary, .outline {
+  width: 100%;
+  min-height: 3.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: .5rem 1rem;
+  border-radius: 1rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  text-align: center;
+  transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease), transform 120ms var(--ease);
+}
+.primary { border: 0; background: var(--accent); color: var(--background); }
+.primary:hover { background: #ffcf61; }
+.primary:active, .outline:active { transform: scale(.98); }
+.primary:disabled { background: var(--surface); color: var(--faint); transform: none; }
+.outline { border: 1px solid var(--line); background: none; color: var(--ink); font-weight: 600; }
+.outline:hover { border-color: var(--faint); }
+.outline:disabled { color: var(--faint); }
+.quiet {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: 0 1rem;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: .9375rem;
+  font-weight: 600;
+  transition: color 150ms var(--ease);
+}
+.quiet:hover { color: var(--ink); }
+.quiet:disabled { color: var(--faint); }
+.inlineLink {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .9375rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.field {
+  width: 100%;
+  min-height: 3.5rem;
+  padding: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1.125rem;
+  transition: border-color 150ms var(--ease);
+}
+.field:focus { outline: none; border-color: var(--ink); }
+.label { display: grid; gap: .375rem; color: var(--dim); font-size: .875rem; font-weight: 600; }
+.error { color: var(--wrong); font-size: .9375rem; }
+.success { color: var(--correct); }
+.empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; padding: 0 1rem; text-align: center; }
+.empty h2 { font-size: 1.375rem; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .iconButton, .primary, .outline, .quiet, a.row, button.row { transition: none; }
+}

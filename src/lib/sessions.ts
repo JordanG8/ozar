@@ -34,3 +34,18 @@ export async function getSessionDetails(userId: string, sessionId: string, page:
     .limit(answerPageSize + 1).offset((page - 1) * answerPageSize);
   return { session, answers };
 }
+
+export async function getSessionSummary(userId: string, sessionId: string) {
+  const db = getDb();
+  const [session] = await db.select().from(sessions)
+    .where(and(eq(sessions.userId, userId), eq(sessions.id, sessionId), gt(sessions.answers, 0))).limit(1);
+  if (!session) return null;
+  const slowest = await db.select({
+    id: reviewLogs.promptId, term: words.term, definition: words.definition, responseMs: reviewLogs.responseMs,
+  }).from(reviewLogs)
+    .innerJoin(cards, and(eq(cards.id, reviewLogs.cardId), eq(cards.userId, userId)))
+    .innerJoin(words, eq(words.id, cards.wordId))
+    .where(and(eq(reviewLogs.userId, userId), eq(reviewLogs.sessionId, session.id), eq(reviewLogs.correct, true)))
+    .orderBy(desc(reviewLogs.responseMs)).limit(3);
+  return { session, slowest };
+}

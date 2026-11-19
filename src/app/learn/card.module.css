@@ -1,0 +1,164 @@
+/* The card: surface, 28px radius; edge and term change tone together in 180ms. */
+.card {
+  --tone: var(--surface);
+  --tone-ink: var(--ink);
+  height: 100%;
+  min-height: 17rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1.5rem;
+  border: 1px solid var(--tone);
+  border-radius: 1.75rem;
+  background: var(--surface);
+  transition: border-color 180ms var(--ease);
+}
+.compact { padding-block: 1.5rem; }
+.card[data-tone="correct"] { --tone: var(--correct); --tone-ink: var(--correct); }
+.card[data-tone="partial"] { --tone: var(--partial); --tone-ink: var(--partial); }
+.card[data-tone="wrong"] { --tone: var(--wrong); --tone-ink: var(--wrong); }
+.card[data-tone="milestone"] { --tone: var(--accent); --tone-ink: var(--accent); }
+.top { min-height: 1.5rem; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: .8125rem; font-weight: 600; }
+.bottom { display: flex; justify-content: center; padding-top: .75rem; }
+.content {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+  min-height: 0;
+}
+.term {
+  max-width: 100%;
+  font-size: clamp(2.75rem, 14vw, 4rem);
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: -.01em;
+  color: var(--tone-ink);
+  overflow-wrap: break-word;
+  transition: color 180ms var(--ease);
+}
+.term:focus { outline: none; }
+.learnTerm { font-size: clamp(2.5rem, 12vw, 3.5rem); }
+.compact .term { font-size: clamp(2.5rem, 12vw, 3.5rem); }
+.question { max-width: 20rem; font-size: 1.75rem; font-weight: 600; line-height: 1.4; }
+.ask { color: var(--dim); font-size: .9375rem; }
+.rule { width: 2rem; height: 1px; flex: none; background: var(--faint); transition: background 180ms var(--ease); }
+.card:not([data-tone="idle"]) .rule { background: var(--tone); }
+.definition { max-width: 19rem; font-size: 1.5rem; font-weight: 500; line-height: 1.4; }
+.example { max-width: 19rem; color: var(--dim); font-size: 1.0625rem; line-height: 1.6; }
+.example strong { color: var(--ink); font-weight: 700; }
+.nudge { max-width: 19rem; color: var(--tone-ink); font-size: .9375rem; line-height: 1.5; }
+.rise { animation: rise 200ms var(--ease) both; }
+.content > .rise + .rise { animation-delay: 100ms; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+.tally { display: inline-flex; align-items: center; gap: .75rem; color: var(--accent); }
+.tallyCount { font-size: .9375rem; font-weight: 700; }
+.tallyLarge { animation: grow 250ms var(--ease) both; }
+@keyframes grow { from { opacity: 0; transform: scale(.6); } }
+.milestoneNumber { font-size: 6rem; font-weight: 800; line-height: 1; color: var(--accent); animation: settle 200ms var(--ease) both; }
+@keyframes settle { from { opacity: 0; transform: scale(.96); } }
+.milestoneLabel { font-size: 1.375rem; font-weight: 500; }
+
+/* Hints (learn only). */
+.hint { display: flex; flex-direction: column; align-items: center; gap: .25rem; animation: rise 200ms var(--ease) both; }
+.hint > span { color: var(--dim); font-size: .8125rem; }
+.hint > p { max-width: 19rem; font-size: 1.0625rem; line-height: 1.6; }
+.blank { display: inline-block; width: 4.5rem; border-bottom: 1px solid var(--ink); vertical-align: -2px; }
+.letters { display: flex; gap: .875rem; font-size: 1.375rem; font-weight: 600; }
+.letters > span { display: inline-flex; align-items: baseline; gap: .125rem; }
+.letters > span::after { content: ""; display: inline-block; width: 1.5rem; border-bottom: 1px solid var(--dim); }
+.hintButton {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: .875rem;
+  background: none;
+  color: var(--ink);
+  font-size: .9375rem;
+  font-weight: 600;
+}
+.hintButton:disabled { color: var(--faint); }
+
+/* Mic disk: amber when listening, two hairline rings — the only looping motion. */
+.diskWrap { position: relative; width: 5.5rem; height: 5.5rem; flex: none; display: grid; place-items: center; margin-block: .75rem .5rem; }
+.disk {
+  position: relative;
+  width: 5.5rem;
+  height: 5.5rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  transition: background 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease), transform 120ms var(--ease);
+}
+.disk:active { transform: scale(.96); }
+.diskWrap[data-state="listening"] .disk { border-color: var(--accent); background: var(--accent); color: var(--background); }
+.diskWrap[data-state="judging"] .disk { color: var(--faint); }
+.diskWrap[data-state="off"] .disk { color: var(--faint); border-style: dashed; }
+.diskWrap[data-state="countdown"] .disk { border-color: transparent; }
+.diskWrap[data-state="countdown"][data-tone="correct"] .disk { color: var(--correct); }
+.diskWrap[data-state="countdown"][data-tone="partial"] .disk { color: var(--partial); }
+.diskWrap[data-state="countdown"][data-tone="milestone"] .disk { color: var(--accent); }
+.wave {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  animation: wave 1.6s ease-out infinite;
+  pointer-events: none;
+}
+.late { animation-delay: .8s; }
+@keyframes wave { from { opacity: .45; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
+.timer { position: absolute; inset: -.75rem; width: calc(100% + 1.5rem); height: calc(100% + 1.5rem); transform: rotate(-90deg); fill: none; stroke-width: 2; pointer-events: none; }
+.timerTrack { stroke: var(--line); }
+.timerArc { stroke: var(--correct); stroke-linecap: round; stroke-dasharray: 100 100; stroke-dashoffset: 100; animation: fill var(--duration) linear forwards; }
+.diskWrap[data-tone="partial"] .timerArc { stroke: var(--partial); }
+.diskWrap[data-tone="milestone"] .timerArc { stroke: var(--accent); }
+@keyframes fill { to { stroke-dashoffset: 0; } }
+
+/* Transcript: settled ink; while judging it locks and a hairline sweeps under it. */
+.transcript { min-height: 2.25rem; display: flex; flex-direction: column; align-items: center; max-width: 100%; }
+.transcript p { max-width: 100%; font-size: 1.375rem; font-weight: 500; line-height: 1.45; text-align: center; overflow-wrap: anywhere; }
+.transcript[data-tone="dim"] p { color: var(--dim); font-size: 1.0625rem; }
+.transcript s { color: var(--wrong); }
+.sweep { position: relative; width: 10.5rem; height: 1px; margin-top: .125rem; background: var(--line); overflow: hidden; }
+.sweep i { position: absolute; inset: 0; background: var(--dim); transform-origin: right; animation: sweep 1.5s linear forwards; }
+@keyframes sweep { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+.choices { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+.choices button {
+  min-height: 4rem;
+  padding: .5rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: none;
+  color: var(--ink);
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: border-color 150ms var(--ease), color 150ms var(--ease), background 150ms var(--ease);
+}
+.choices button:not(:disabled):hover { border-color: var(--faint); background: var(--surface); }
+.choices button[data-state="correct"] { border-color: var(--correct); color: var(--correct); }
+.choices button[data-state="wrong"] { border-color: var(--wrong); color: var(--wrong); }
+.choices button[data-state="dim"] { color: var(--dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .term, .rule, .disk, .choices button { transition: none; }
+  .rise, .hint, .tallyLarge, .milestoneNumber { animation: none; }
+  .wave { animation: none; opacity: .4; transform: scale(1.2); }
+  .late { display: none; }
+  .timerArc { animation-duration: 1ms; }
+  .sweep i { animation: none; transform: none; }
+}

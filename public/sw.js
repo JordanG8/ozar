@@ -1,4 +1,4 @@
-const staticCache = "ozar-offline-v1";
+const staticCache = "ozar-offline-v2";
 const offline = "/offline.html";
 
 self.addEventListener("install", (event) => {

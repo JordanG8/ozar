@@ -1,39 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { exampleParts } from "@/lib/learn/matcher";
+import { useEffect, useRef, useState } from "react";
 import { decisionNudge, type AnswerInput, type AnswerReceipt, type Feedback, type MeaningInput, type StudyState } from "@/lib/learn/protocol";
+import { Icon } from "../icons";
+import ui from "../ui.module.css";
+import { Choices, Definition, Example, Nudge, Rule, StudyCard, Term } from "./card";
+import card from "./card.module.css";
 import { JudgeControls } from "./judge-controls";
 import { request } from "./request";
 import { useJudge } from "./use-judge";
 import { useSpeech } from "./use-speech";
+import { VoiceControls } from "./voice-controls";
 import styles from "./study.module.css";
 
 type Hint = { hintLevel: number; example: string | null; letters: string | null };
-
-export function Example({ example, term }: { example: string | null; term: string }) {
-  if (!example) return null;
-  const parts = exampleParts(example, term);
-  return <p className={styles.example}>{parts.map(({ text, highlighted, start }) =>
-    highlighted ? <strong key={start}>{text}</strong> : text)}</p>;
-}
-
-export function Microphone() {
-  return (
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-      <rect x="9" y="3" width="6" height="12" rx="3" />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3m-3 0h6" />
-    </svg>
-  );
-}
-
 type Deck = { id: string; name: string; size: number; seen: number };
+type Result = Feedback & { picked: string | null };
+
+function HintExample({ text }: { text: string }) {
+  const parts = text.split("____");
+  return <p>{parts.map((part, index) => <span key={index}>{part}{index < parts.length - 1 &&
+    <span className={card.blank} role="img" aria-label="מילה חסרה" />}</span>)}</p>;
+}
 
 export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: string }) {
   const [deckId, setDeckId] = useState(initialDeck);
   const [state, setState] = useState<StudyState | null>(null);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [hint, setHint] = useState<Hint | null>(null);
   const [typed, setTyped] = useState<boolean | null>(null);
   const [value, setValue] = useState("");
@@ -47,6 +41,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   const title = useRef<HTMLHeadingElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const active = useRef<string | null>(null);
+  const picked = useRef<string | null>(null);
   const speechInFlight = useRef(false);
   const speechPending = useRef<{ promptId: string; input: AnswerInput } | null>(null);
   const lastSpoken = useRef("");
@@ -59,11 +54,12 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   async function show(action: "start" | "next") {
     const data = await request<StudyState>({ action, deckId });
     active.current = data.prompt?.id ?? null;
+    picked.current = null;
     judge.reset(data.prompt?.id, data.judgePending);
     speechPending.current = null;
     lastSpoken.current = "";
     setState(data);
-    setFeedback(null);
+    setResult(null);
     setHint(null);
     setValue("");
     setSpoken("");
@@ -72,11 +68,11 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     }
   }
 
-  function accept(result: Feedback) {
+  function accept(feedback: Feedback) {
     active.current = null;
     judge.reset();
     speechPending.current = null;
-    setFeedback(result);
+    setResult({ ...feedback, picked: picked.current });
   }
 
   async function run(action: () => Promise<void>) {
@@ -90,8 +86,8 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     if (!voicePrompt || active.current !== voicePrompt) return;
     setError("");
     try {
-      const result = await judge.submit(voicePrompt, input);
-      if (result?.feedback && active.current === voicePrompt) accept(result.feedback);
+      const receipt = await judge.submit(voicePrompt, input);
+      if (receipt?.feedback && active.current === voicePrompt) accept(receipt.feedback);
     } catch (cause) { showError(cause); }
   }
 
@@ -113,8 +109,8 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
       while (speechPending.current) {
         const pending = speechPending.current;
         speechPending.current = null;
-        const result = await request<AnswerReceipt>({ action: "answer", ...pending });
-        if (result.feedback && active.current === pending.promptId) accept(result.feedback);
+        const receipt = await request<AnswerReceipt>({ action: "answer", ...pending });
+        if (receipt.feedback && active.current === pending.promptId) accept(receipt.feedback);
       }
     } catch (cause) {
       showError(cause);
@@ -124,137 +120,117 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     }
   }
 
-  const speech = useSpeech(voicePrompt, Boolean(voicePrompt && speechReady && !useTyping && !feedback && !judge.pending), processSpeech);
+  const speech = useSpeech(voicePrompt, Boolean(voicePrompt && speechReady && !useTyping && !result && !judge.pending), processSpeech);
 
   async function submit(input: AnswerInput) {
     if (!prompt) return;
     speech.stop();
-    const result = await request<AnswerReceipt>({ action: "answer", promptId: prompt.id, input });
-    if (result.feedback) accept(result.feedback);
-    else if (result.accepted) await show("next");
+    if (input.kind === "tap") picked.current = input.choice;
+    const receipt = await request<AnswerReceipt>({ action: "answer", promptId: prompt.id, input });
+    if (receipt.feedback) accept(receipt.feedback);
+    else if (receipt.accepted) await show("next");
   }
 
   useEffect(() => {
     if (state) title.current?.focus();
-  }, [state, feedback]);
+  }, [state, result]);
 
   useEffect(() => {
-    if (useTyping && voicePrompt && !judge.pending && !feedback) field.current?.focus();
-  }, [useTyping, voicePrompt, judge.pending, feedback]);
-
-  function submitTyped(event: FormEvent) {
-    event.preventDefault();
-    if (value.trim()) void submitMeaning({ kind: "typed", value });
-  }
+    if (useTyping && voicePrompt && !judge.pending && !result) field.current?.focus();
+  }, [useTyping, voicePrompt, judge.pending, result]);
 
   const hintLevel = hint?.hintLevel ?? state?.hintLevel ?? 0;
   const progressed = state ? state.total - state.remaining : 0;
-  const status = error || (voicePrompt && !useTyping && !judge.pending && !feedback ? speech.speechError || spoken : "");
+  const reverse = prompt?.kind === "reverse_choice" ? prompt : null;
+  const tone = !result ? "idle" : !result.correct ? "wrong" : result.decision === "partial" ? "partial" : "correct";
+  const position = state ? Math.min(state.total, progressed + (prompt ? 1 : 0)) : 0;
 
   return (
     <main className={styles.shell}>
-      <header className={styles.top}>
-        <Link href="/?menu=1" className={styles.brand}>אוצר</Link>
-        <span>לימוד</span>
-        {state && state.total > 0 ? <span className={styles.count} aria-label={`${progressed} מתוך ${state.total} מילים הושלמו`}>
-          <bdi>{progressed} / {state.total}</bdi>
-        </span> : null}
+      <header className={styles.progressHead}>
+        <Link className={`${ui.iconButton} ${styles.close}`} href="/" aria-label="סיום מנת הלמידה"><Icon name="close" /></Link>
+        <div className={styles.progressMeta}>
+          <strong>למידה</strong>
+          {state && state.total > 0 && prompt ? <span>מילה <bdi>{position}</bdi> מתוך <bdi>{state.total}</bdi></span> : null}
+        </div>
+        <div className={styles.progress} role="progressbar" aria-label="התקדמות הלמידה" aria-valuemin={0}
+          aria-valuemax={state?.total || 1} aria-valuenow={progressed}>
+          <i style={{ width: `${state?.total ? progressed / state.total * 100 : 0}%` }} />
+        </div>
       </header>
-      {state && state.total > 0 && <progress className={styles.progress} value={progressed} max={state.total} aria-label="התקדמות הלימוד" />}
-      <section className={styles.card} aria-busy={busy}>
-        {!state ? (
-          <>
-            <h1 ref={title} tabIndex={-1}>לימוד מילים</h1>
-            {decks.length > 1 && <label className={styles.deck}>חפיסה ללימוד
-              <select disabled={busy} value={deckId} onChange={(event) => setDeckId(event.target.value)}>
-                {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name} · {deck.size} מילים</option>)}
-              </select>
-            </label>}
-            <Link className={styles.import} href="/decks/import">ייבוא מילים</Link>
-          </>
-        ) : feedback ? (
-          <>
-            <p className={feedback.correct ? styles.correct : styles.wrong}>
-              {feedback.decision === "partial" ? "תשובה נכונה חלקית" : feedback.correct ? "תשובה נכונה" : "נתרגל את המילה שוב"}
-            </p>
-            <h1 ref={title} tabIndex={-1}>{feedback.term}</h1>
-            {feedback.correct && feedback.matched && feedback.matched !== feedback.term &&
-              <p className={styles.correct}>{feedback.matched}</p>}
-            <p className={styles.definition}>{feedback.definition}</p>
-            {feedback.decision && decisionNudge(feedback.decision) && <p className={styles.example}>{decisionNudge(feedback.decision)}</p>}
-            <Example example={feedback.example} term={feedback.term} />
-          </>
-        ) : !prompt ? (
-          <>
-            <h1 ref={title} tabIndex={-1}>סיימת להיום</h1>
-            <p className={styles.definition}>כל המילים הזמינות ללימוד היום הושלמו.</p>
-          </>
-        ) : prompt.kind === "intro" ? (
-          <>
-            <p className={styles.label}>מילה חדשה</p>
-            <h1 ref={title} tabIndex={-1}>{prompt.term}</h1>
-            <p className={styles.definition}>{prompt.definition}</p>
-            <Example example={prompt.example} term={prompt.term} />
-          </>
-        ) : prompt.kind === "voice_meaning" ? (
-          <>
-            <p className={styles.label}>מה המשמעות?</p>
-            <h1 ref={title} tabIndex={-1}>{prompt.term}</h1>
-            {hint && <div className={styles.hint} aria-live="polite">
-              <p>{hint.example ?? "אין דוגמה זמינה לרמז הזה."}</p>
-              {hint.letters ? <p>אותיות ראשונות <b>{hint.letters}</b></p> : null}
-            </div>}
-          </>
-        ) : (
-          <>
-            <p className={styles.label}>בחרו את המילה המתאימה</p>
-            <h1 className={styles.question} ref={title} tabIndex={-1}>{prompt.definition}</h1>
-          </>
-        )}
-      </section>
-      <div className={styles.controls}>
-        {(voicePrompt || feedback) && <p role="status" className={styles.micStatus}
-          data-listening={speech.listening}>{speech.micStatus}</p>}
-        {status && <p role={error ? "alert" : undefined} className={error ? styles.wrong : styles.status}>{status}</p>}
-        {!state ? <button className={styles.primary} disabled={busy} onClick={() => void run(async () => {
-          setSpeechReady(true);
-          await show("start");
-        })}>התחלה או המשך</button>
-          : feedback ? <button className={styles.primary} disabled={busy} onClick={() => void run(() => show("next"))}>הכרטיס הבא</button>
-          : !prompt ? <>
-            <Link href="/infinite" className={styles.primary}>לתרגול רציף</Link>
-            {decks.length > 1 && <button className={styles.secondary} onClick={() => setState(null)}>בחירת חפיסה</button>}
-          </>
-          : prompt.kind === "intro" ? <button className={styles.primary} disabled={busy}
-            onClick={() => void run(() => submit({ kind: "continue" }))}>להמשך</button>
-          : prompt.kind === "reverse_choice" ? <div className={styles.choices}>
-            {prompt.choices.map((choice) => <button className={styles.secondary} key={choice.id} disabled={busy}
-              onClick={() => void run(() => submit({ kind: "tap", choice: choice.id }))}>{choice.term}</button>)}
-          </div>
-          : judge.pending ? <JudgeControls pending={judge.pending} busy={judge.selfBusy}
-            onGrade={(correct) => void submitMeaning({ kind: "self", correct })} />
-          : <>
-            {useTyping ? <form className={styles.typed} onSubmit={submitTyped}>
-              <label htmlFor="meaning">התשובה שלך</label>
-              <input id="meaning" ref={field} value={value} onChange={(event) => setValue(event.target.value)} maxLength={300} />
-              <button className={styles.primary} disabled={busy || !value.trim()} type="submit">בדיקה</button>
-            </form> : <button className={styles.mic} data-listening={speech.listening} disabled={busy || speech.finishing}
-              aria-pressed={speech.recording} onClick={() => speech.recording ? speech.finish() : speech.start()}>
-              <Microphone />
-              {speech.finishing ? "מסיים זיהוי…" : speech.recording ? "עצירת הקלטה" : "מענה בקול"}
-            </button>}
-            {!useTyping && speech.showTranscriptionNotice && <p className={styles.status}>הקלטות קצרות נשלחות לתמלול.</p>}
-            <div className={styles.actions}>
-              <button disabled={busy} onClick={() => { speech.stop(); setSpoken(""); setTyped(!useTyping); }}>
-                {useTyping ? "מענה בקול" : "מענה בהקלדה"}
-              </button>
-              {hintLevel < 2 && <button disabled={busy} onClick={() => void run(async () => {
-                setHint(await request<Hint>({ action: "hint", level: hintLevel + 1, promptId: prompt.id }));
-              })}>{hintLevel ? "אותיות ראשונות" : "רמז"}</button>}
-              <button disabled={busy} onClick={() => void run(() => submit({ kind: "skip" }))}>לא יודע</button>
-            </div>
+
+      <div className={styles.stage}>
+        {!state ? <section className={styles.start}>
+          <h1 ref={title} tabIndex={-1}>מנת הלמידה של היום</h1>
+          <p className={ui.lede}>מילים חדשות, אחת אחרי השנייה: היכרות, שליפה בקול ובחירה הפוכה.</p>
+          {decks.length > 1 && <label className={ui.label}>חפיסה ללימוד
+            <select className={styles.select} disabled={busy} value={deckId} onChange={(event) => setDeckId(event.target.value)}>
+              {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name} · {deck.size} מילים</option>)}
+            </select>
+          </label>}
+        </section> : result ? <StudyCard tone={tone} kind={prompt?.kind} verdict={tone}
+          bottom={reverse && !result.correct ? <p className={card.ask}><b>{result.term}</b>. נחזור אליה בעוד כמה כרטיסים</p> : undefined}>
+          {reverse && <p className={card.ask}>{reverse.definition}</p>}
+          <Term size="learn" ref={title}>{result.term}</Term>
+          <Rule />
+          <Definition>{result.definition}</Definition>
+          {result.decision && decisionNudge(result.decision) && <Nudge>{decisionNudge(result.decision)}</Nudge>}
+          <Example example={result.example} term={result.term} />
+        </StudyCard> : !prompt ? <section className={styles.end}>
+          <h1 ref={title} tabIndex={-1}>סיימת את מנת הלמידה</h1>
+          <span className={styles.endNumber}>{state.total}</span>
+          <p className={styles.endLabel}>{state.total ? "מילים חדשות נכנסו לסבב" : "אין מילים חדשות להיום"}</p>
+        </section> : prompt.kind === "intro" ? <StudyCard kind="intro" top="מילה חדשה">
+          <h1 ref={title} tabIndex={-1} className={`${card.term} ${card.learnTerm}`}>{prompt.term}</h1>
+          <Definition>{prompt.definition}</Definition>
+          <Rule />
+          <Example example={prompt.example} term={prompt.term} />
+        </StudyCard> : prompt.kind === "voice_meaning" ? <StudyCard kind="voice_meaning" compact={useTyping}
+          bottom={<button type="button" className={card.hintButton} disabled={busy || hintLevel >= 2}
+            onClick={() => void run(async () => {
+              setHint(await request<Hint>({ action: "hint", level: hintLevel + 1, promptId: prompt.id }));
+            })}><Icon name="hint" size={18} />{hintLevel >= 2 ? "אין עוד רמזים" : `רמז · ${2 - hintLevel} נותרו`}</button>}>
+          <h1 ref={title} tabIndex={-1} className={`${card.term} ${card.learnTerm}`}>{prompt.term}</h1>
+          {hint && <><Rule />
+            <div className={card.hint} aria-live="polite"><span>רמז 1 · דוגמה</span>
+              {hint.example ? <HintExample text={hint.example} /> : <p>אין דוגמה זמינה לרמז הזה.</p>}</div>
+            {hint.letters && <div className={card.hint}><span>רמז 2 · אותיות ראשונות</span>
+              <p className={card.letters} aria-label={hint.letters}>{hint.letters.split(" · ").map((letter, index) =>
+                <span key={index} aria-hidden="true">{letter}</span>)}</p></div>}
           </>}
+        </StudyCard> : <StudyCard kind="reverse_choice">
+          <p className={card.ask}>איזה ביטוי מתאים?</p>
+          <h1 className={card.question} ref={title} tabIndex={-1}>{prompt.definition}</h1>
+        </StudyCard>}
       </div>
+
+      <footer className={styles.controls} data-layout={!voicePrompt || result ? "end" : undefined}>
+        {error && <p className={styles.alert} role="alert">{error}</p>}
+        {!state ? <>
+          <button type="button" className={ui.primary} disabled={busy} onClick={() => void run(async () => {
+            setSpeechReady(true);
+            await show("start");
+          })}>התחלה או המשך</button>
+          <Link className={ui.quiet} href="/decks/import"><Icon name="upload" size={18} />ייבוא מילים</Link>
+        </> : result ? <>
+          {reverse && <Choices choices={reverse.choices} picked={result.picked} answer={result.term} onPick={() => {}} />}
+          <button type="button" className={ui.primary} disabled={busy} onClick={() => void run(() => show("next"))}>הכרטיס הבא</button>
+        </> : !prompt ? <>
+          <Link href="/infinite" className={ui.primary}>להמשיך לאינסופי</Link>
+          {decks.length > 1 ? <button type="button" className={ui.quiet} onClick={() => setState(null)}>בחירת חפיסה</button>
+            : <Link href="/" className={ui.quiet}>לסיים להיום</Link>}
+        </> : prompt.kind === "intro" ? <button type="button" className={ui.primary} disabled={busy}
+          onClick={() => void run(() => submit({ kind: "continue" }))}>הבנתי</button>
+          : reverse ? <Choices choices={reverse.choices} disabled={busy}
+            onPick={(choice) => void run(() => submit({ kind: "tap", choice }))} />
+          : judge.pending ? <JudgeControls pending={judge.pending} busy={judge.selfBusy} transcript={spoken || value}
+            onGrade={(correct) => void submitMeaning({ kind: "self", correct })} />
+          : <VoiceControls speech={speech} typing={useTyping} value={value} field={field} spoken={spoken} busy={busy}
+            inputId="meaning" onValue={setValue}
+            onSubmit={() => void submitMeaning({ kind: "typed", value })}
+            onToggle={() => { speech.stop(); setSpoken(""); setTyped(!useTyping); }}
+            onSkip={() => void run(() => submit({ kind: "skip" }))} />}
+      </footer>
     </main>
   );
 }

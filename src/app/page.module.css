@@ -1,41 +1,61 @@
-.home {
-  width: min(100%, 43rem);
-  min-height: 100svh;
-  margin-inline: auto;
-  padding: 0 clamp(1.5rem, 6vw, 3rem) max(1.5rem, env(safe-area-inset-bottom));
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-}
-.header {
+.bar { justify-content: space-between; padding-inline: 1.5rem .75rem; }
+.wordmark { min-height: 2.75rem; display: flex; align-items: center; font-size: 1.375rem; font-weight: 800; }
+.streak { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding-top: .5rem; }
+.streakNumber { font-size: 2.5rem; font-weight: 700; line-height: 1; }
+.streakLabel { color: var(--dim); font-size: .9375rem; }
+.week { display: flex; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.week li { display: flex; flex-direction: column; align-items: center; gap: .375rem; color: var(--dim); font-size: .8125rem; }
+.week i { width: .5rem; height: .5rem; border-radius: 50%; border: 1px solid var(--line); }
+.week li[data-state="met"] i { border-color: var(--ink); background: var(--ink); }
+.week li[data-state="today"] { color: var(--ink); }
+.week li[data-state="today"] i { border-color: var(--ink); }
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem; padding: 2rem 1.5rem; }
+.dial { position: relative; width: 15.5rem; height: 15.5rem; display: grid; place-items: center; }
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 2; }
+.track { stroke: var(--line); }
+.ringFill, .ringDone { stroke-linecap: round; transition: stroke-dasharray 250ms var(--ease), stroke 250ms var(--ease); }
+.ringFill { stroke: var(--ink); }
+.ringDone { stroke: var(--correct); }
+.disk {
+  position: relative;
+  width: 12.5rem;
+  height: 12.5rem;
+  border-radius: 50%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  min-height: 4rem;
-  border-block-end: 1px solid var(--line);
-  color: var(--muted);
-}
-.title { align-self: center; padding-block: 2rem; }
-.title h1 { font-size: clamp(5rem, 21vw, 10rem); line-height: .95; font-weight: 800; }
-.title p { max-width: 24ch; margin-block-start: 1.5rem; color: var(--muted); font-size: 1.375rem; line-height: 1.4; }
-.start {
-  display: grid;
-  place-items: center;
-  min-height: 3.5rem;
-  border-radius: .5rem;
-  padding: .5rem 1rem;
+  justify-content: center;
+  gap: .25rem;
   background: var(--accent);
   color: var(--background);
-  font-weight: 800;
-  font-size: 1.25rem;
-  transition: background 180ms ease-out;
+  transition: transform 120ms var(--ease), background 150ms var(--ease);
 }
-.start:hover { background: #ffcf61; }
-@media (prefers-reduced-motion: reduce) { .start { transition: none; } }
-.menu { display: grid; gap: .5rem; }
-.practice {
-  min-height: 3rem;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--muted);
-  border-radius: .5rem;
-  font-weight: 700;
+a.disk:hover { background: #ffcf61; }
+a.disk:active { transform: scale(.96); }
+.diskTitle { font-size: 2rem; font-weight: 800; line-height: 1.2; }
+.diskSub { font-size: .9375rem; font-weight: 600; }
+.locked { background: var(--surface); border: 1px solid var(--line); color: var(--dim); gap: .5rem; }
+.doneDisk { background: var(--surface); color: var(--dim); }
+.check { display: flex; color: var(--correct); }
+.diskMeta { font-size: .9375rem; }
+.caption { max-width: 18rem; color: var(--dim); font-size: .9375rem; text-align: center; }
+.doneTitle { margin-top: .5rem; font-size: 1.75rem; font-weight: 800; }
+.continue { padding: 0 1.5rem 1rem; }
+.learnRow {
+  flex: none;
+  min-height: 4.5rem;
+  margin: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  border-block: 1px solid var(--line);
+  transition: background 120ms var(--ease);
+}
+.learnRow:active { background: var(--surface); }
+.learnText { flex: 1; display: flex; flex-direction: column; }
+.learnText strong { font-size: 1.0625rem; font-weight: 700; }
+.learnText span { color: var(--dim); font-size: .8125rem; }
+.links { flex: none; display: flex; justify-content: space-between; padding: .5rem .75rem 1.5rem; }
+@media (prefers-reduced-motion: reduce) {
+  .ringFill, .ringDone, .disk { transition: none; }
 }
