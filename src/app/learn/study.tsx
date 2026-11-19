@@ -149,8 +149,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
 
   const hintLevel = hint?.hintLevel ?? state?.hintLevel ?? 0;
   const progressed = state ? state.total - state.remaining : 0;
-  const status = error || (!judge.pending && !feedback
-    ? speech.listening ? "מקשיב…" : spoken || (voicePrompt && !useTyping ? speech.speechError : "") : "");
+  const status = error || (voicePrompt && !useTyping && !judge.pending && !feedback ? speech.speechError || spoken : "");
 
   return (
     <main className={styles.shell}>
@@ -214,7 +213,9 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
         )}
       </section>
       <div className={styles.controls}>
-        <p role="status" className={error ? styles.wrong : styles.status}>{status || ""}</p>
+        {(voicePrompt || feedback) && <p role="status" className={styles.micStatus}
+          data-listening={speech.listening}>{speech.micStatus}</p>}
+        {status && <p role={error ? "alert" : undefined} className={error ? styles.wrong : styles.status}>{status}</p>}
         {!state ? <button className={styles.primary} disabled={busy} onClick={() => void run(async () => {
           setSpeechReady(true);
           await show("start");
@@ -237,10 +238,10 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
               <label htmlFor="meaning">התשובה שלך</label>
               <input id="meaning" ref={field} value={value} onChange={(event) => setValue(event.target.value)} maxLength={300} />
               <button className={styles.primary} disabled={busy || !value.trim()} type="submit">בדיקה</button>
-            </form> : <button className={styles.mic} data-listening={speech.listening} disabled={busy}
-              aria-pressed={speech.listening} onClick={() => speech.listening ? speech.finish() : speech.start()}>
+            </form> : <button className={styles.mic} data-listening={speech.listening} disabled={busy || speech.finishing}
+              aria-pressed={speech.recording} onClick={() => speech.recording ? speech.finish() : speech.start()}>
               <Microphone />
-              {speech.listening ? "עצירת הקלטה" : "מענה בקול"}
+              {speech.finishing ? "מסיים זיהוי…" : speech.recording ? "עצירת הקלטה" : "מענה בקול"}
             </button>}
             <div className={styles.actions}>
               <button disabled={busy} onClick={() => { speech.stop(); setSpoken(""); setTyped(!useTyping); }}>

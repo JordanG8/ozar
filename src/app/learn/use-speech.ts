@@ -12,7 +12,8 @@ interface Recognition extends EventTarget {
   stop(): void;
   abort(): void;
   onresult: ((event: { resultIndex: number; results: ArrayLike<RecognitionResult> }) => void) | null;
-  onstart: (() => void) | null;
+  onaudiostart: (() => void) | null;
+  onaudioend: (() => void) | null;
   onend: (() => void) | null;
   onspeechend: (() => void) | null;
   onerror: ((event: { error: string }) => void) | null;
@@ -27,11 +28,10 @@ export function useSpeech(
   enabled: boolean,
   onSpeech: (alternatives: string[], ended: boolean) => void,
 ) {
-  const [listening, setListening] = useState(false);
+  const [phase, setPhase] = useState<"off" | "opening" | "listening" | "finishing">("off");
   const [speechError, setSpeechError] = useState("");
   const instance = useRef<Recognition | null>(null);
-  const restarts = useRef(0);
-  const retry = useRef<number | undefined>(undefined);
+  const attemptedPrompt = useRef<string | null>(null);
   const boundary = useRef<number | undefined>(undefined);
   const listener = useRef(onSpeech);
 
@@ -40,24 +40,24 @@ export function useSpeech(
   }, [onSpeech]);
 
   const stop = useCallback(() => {
-    window.clearTimeout(retry.current);
     window.clearTimeout(boundary.current);
     const recognition = instance.current;
     instance.current = null;
     if (recognition) {
       recognition.onresult = null;
-      recognition.onstart = null;
+      recognition.onaudiostart = null;
+      recognition.onaudioend = null;
       recognition.onerror = null;
       recognition.onend = null;
       recognition.onspeechend = null;
       recognition.abort();
     }
-    setListening(false);
+    setPhase("off");
   }, []);
 
-  const start = useCallback(function listen() {
-    if (instance.current) return;
-    window.clearTimeout(retry.current);
+  const start = useCallback(() => {
+    if (!enabled || !promptId || instance.current) return;
+    attemptedPrompt.current = promptId;
     const speechWindow = window as SpeechWindow;
     const BrowserRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
     if (!BrowserRecognition) {
@@ -72,13 +72,14 @@ export function useSpeech(
     recognition.maxAlternatives = 5;
     let latest: string[] = [];
     let submitted = false;
-    let retryable = true;
+    let canSubmit = true;
     function submitUtterance() {
-      if (submitted || !latest.length) return;
+      if (!canSubmit || submitted || !latest.length) return;
       submitted = true;
       listener.current(latest, true);
     }
-    recognition.onstart = () => setListening(true);
+    recognition.onaudiostart = () => setPhase("listening");
+    recognition.onaudioend = () => setPhase("finishing");
     recognition.onresult = ({ results, resultIndex }) => {
       const result = results[resultIndex];
       if (!result || submitted) return;
@@ -95,43 +96,51 @@ export function useSpeech(
       boundary.current = window.setTimeout(submitUtterance, 140);
     };
     recognition.onerror = ({ error }) => {
-      if (error === "aborted" || error === "no-speech") return;
-      retryable = false;
-      setSpeechError("זיהוי הדיבור אינו זמין כרגע. אפשר להקליד תשובה.");
+      if (error === "aborted") return;
+      canSubmit = false;
+      setPhase("off");
+      setSpeechError(error === "no-speech" ? "לא נקלט דיבור. אפשר להפעיל שוב את המיקרופון."
+        : "זיהוי הדיבור אינו זמין כרגע. אפשר להקליד תשובה.");
     };
     recognition.onend = () => {
       if (instance.current !== recognition) return;
       window.clearTimeout(boundary.current);
       instance.current = null;
-      setListening(false);
-      if (retryable) submitUtterance();
-      if (!submitted && retryable && restarts.current < 3) {
-        restarts.current++;
-        retry.current = window.setTimeout(listen, 400);
-      }
+      setPhase("off");
+      submitUtterance();
+      if (canSubmit && !submitted) setSpeechError("לא נקלט דיבור. אפשר להפעיל שוב את המיקרופון.");
     };
     try {
-      recognition.start();
       setSpeechError("");
+      setPhase("opening");
+      recognition.start();
     } catch {
       instance.current = null;
+      setPhase("off");
       setSpeechError("המיקרופון אינו זמין כרגע. אפשר להקליד תשובה.");
     }
-  }, []);
+  }, [enabled, promptId]);
 
   const finish = useCallback(() => {
     if (instance.current) instance.current.stop();
   }, []);
 
   useEffect(() => {
-    restarts.current = 0;
     // Schedule the first attempt so discarded Strict Mode renders never open the mic.
-    const first = enabled ? window.setTimeout(start, 0) : undefined;
+    const first = enabled && attemptedPrompt.current !== promptId ? window.setTimeout(start, 0) : undefined;
     return () => {
       window.clearTimeout(first);
       stop();
     };
   }, [enabled, promptId, start, stop]);
 
-  return { listening, speechError, start, stop, finish };
+  const currentPhase = enabled ? phase : "off";
+  return {
+    listening: currentPhase === "listening",
+    recording: currentPhase === "opening" || currentPhase === "listening",
+    finishing: currentPhase === "finishing",
+    micStatus: currentPhase === "opening" ? "פותח מיקרופון…" :
+      currentPhase === "listening" ? "המיקרופון פעיל" : "המיקרופון כבוי",
+    speechError, start, stop, finish,
+  };
 }

@@ -42,6 +42,8 @@
 .hint p + p { margin-top: .5rem; }
 .controls { grid-row: 4; display: grid; gap: .75rem; }
 .status { min-height: 1.5rem; color: var(--muted); text-align: center; }
+.micStatus { color: var(--muted); text-align: center; font-size: .95rem; font-weight: 700; }
+.micStatus[data-listening="true"] { color: var(--accent); }
 .primary, .secondary, .mic, .signIn button {
   width: 100%;
   min-height: 3.5rem;

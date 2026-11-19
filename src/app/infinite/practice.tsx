@@ -180,10 +180,6 @@ export function Practice() {
   }
 
   function heard(alternatives: string[], ended: boolean) {
-    if (feedback && !feedback.correct) {
-      void next();
-      return;
-    }
     if (!voice || active.current !== voice) return;
     if (ended) {
       queue.current = [];
@@ -197,8 +193,8 @@ export function Practice() {
     void submit({ kind: "voice", alternatives, final: false });
   }
 
-  const speech = useSpeech(voice ? `${voice}-${feedback ? "continue" : "answer"}` : null,
-    Boolean(voice && !useTyping && !feedback?.correct && !loading && !judgePending), heard);
+  const speech = useSpeech(voice,
+    Boolean(voice && !useTyping && !feedback && !loading && !judgePending), heard);
 
   async function flag() {
     if (!judgment || flagging) return;
@@ -249,7 +245,7 @@ export function Practice() {
           <span className={styles.combo}>רצף {state.combo}</span>
           <span>שיא {state.best}</span>
         </div>}
-        <div className={styles.card} onClick={missed ? () => { speech.stop(); void next(); } : undefined}>
+        <div className={styles.card}>
           {feedback ? <>
             <p role="status" className={feedback.correct ? study.correct : study.wrong}>
               {feedback.decision === "partial" ? "נכון חלקית" : feedback.correct
@@ -275,9 +271,10 @@ export function Practice() {
       </section>
 
       <div className={styles.controls}>
+        {(voice || feedback) && <p className={study.micStatus} role="status" data-listening={speech.listening}>{speech.micStatus}</p>}
         {error ? <p className={study.wrong} role="alert">{error}</p>
-          : voice && !useTyping && !feedback && !judgePending ? <p className={study.status} role="status">
-            {spoken || (speech.listening ? "מקשיב…" : speech.speechError)}
+          : voice && !useTyping && !feedback && !judgePending && (speech.speechError || spoken) ? <p className={study.status}>
+            {speech.speechError || spoken}
           </p> : null}
         {feedback ? <button type="button" className={study.primary} disabled={loading}
           onClick={() => { speech.stop(); void next(); }}>לכרטיס הבא</button>
@@ -294,9 +291,9 @@ export function Practice() {
               <label htmlFor="practice-answer">התשובה שלך</label>
               <input id="practice-answer" ref={inputField} maxLength={300} value={value} onChange={(event) => setValue(event.target.value)} />
               <button className={study.primary} type="submit" disabled={!value.trim()}>בדיקה</button>
-            </form> : <button className={styles.mic} aria-pressed={speech.listening} data-listening={speech.listening}
-              onClick={() => speech.listening ? speech.finish() : speech.start()}>
-              <Microphone />{speech.listening ? "עצירת הקלטה" : "מענה בקול"}
+            </form> : <button className={styles.mic} aria-pressed={speech.recording} data-listening={speech.listening}
+              disabled={speech.finishing} onClick={() => speech.recording ? speech.finish() : speech.start()}>
+              <Microphone />{speech.finishing ? "מסיים זיהוי…" : speech.recording ? "עצירת הקלטה" : "מענה בקול"}
             </button>}
             <div className={study.actions}>
               <button type="button" onClick={() => {

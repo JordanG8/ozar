@@ -103,21 +103,36 @@ test("imports a private CSV, exports the learner's data, and deletes the fixture
   await expect(page.getByLabel("חפיסה ללימוד")).toHaveCount(0);
 });
 
-test("judges an interim speech transcript at speech end and permits a single-tap timeout grade", async ({ page }) => {
+async function installSpeechFixture(page: Page) {
   await page.addInitScript(() => {
+    const probe = { starts: 0, aborted: 0 };
+    Object.assign(window, { speechProbe: probe });
     class SpeechFixture {
-      onstart?: () => void;
+      onaudiostart?: () => void;
+      onaudioend?: () => void;
       onresult?: (event: { resultIndex: number; results: ArrayLike<unknown> }) => void;
       onspeechend?: () => void;
+      onerror?: (event: { error: string }) => void;
+      onend?: () => void;
       start() {
+        probe.starts++;
         Object.assign(window, { fixtureSpeech: this });
-        queueMicrotask(() => this.onstart?.());
+        queueMicrotask(() => this.onaudiostart?.());
       }
-      abort() {}
-      stop() { this.onspeechend?.(); }
+      abort() { probe.aborted++; }
+      stop() { this.onaudioend?.(); this.onspeechend?.(); }
+      silence() {
+        this.onaudioend?.();
+        this.onerror?.({ error: "no-speech" });
+        this.onend?.();
+      }
     }
     Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: SpeechFixture });
   });
+}
+
+test("judges an interim speech transcript at speech end and permits a single-tap timeout grade", async ({ page }) => {
+  await installSpeechFixture(page);
   await signIn(page, "/learn", "spoken-judge@example.test");
   await page.getByRole("button", { name: "התחלה או המשך" }).click();
   await page.getByRole("button", { name: "להמשך", exact: true }).click();
@@ -155,4 +170,40 @@ test("judges an interim speech transcript at speech end and permits a single-tap
     expect.objectContaining({ judge: expect.objectContaining({ model: "google/gemini-decision-1", status: "decided", input: paraphrase }) }),
     expect.objectContaining({ judge: expect.objectContaining({ status: "timeout", selfGrade: true }) }),
   ]));
+});
+
+test("stops listening on a wrong answer and lets the learner restart after silence", async ({ page }) => {
+  await installSpeechFixture(page);
+  await signIn(page, "/learn", "quiet-mic@example.test");
+  await page.getByRole("button", { name: "התחלה או המשך" }).click();
+  await page.getByRole("button", { name: "להמשך", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
+  await page.goto("/infinite");
+  const micOn = page.getByText("המיקרופון פעיל", { exact: true });
+  const micOff = page.getByText("המיקרופון כבוי", { exact: true });
+  await expect(micOn).toBeVisible();
+  await page.clock.install();
+  await page.evaluate(() => {
+    (window as unknown as { fixtureSpeech: { silence: () => void } }).fixtureSpeech.silence();
+  });
+  await expect(micOff).toBeVisible();
+  await expect(page.getByText(/לא נקלט דיבור/u)).toBeVisible();
+  await page.clock.runFor(1500);
+  const started = () => page.evaluate(() => (window as unknown as { speechProbe: { starts: number } }).speechProbe.starts);
+  expect(await started()).toBe(1);
+
+  await page.getByRole("button", { name: "מענה בקול" }).click();
+  await expect(micOn).toBeVisible();
+  await page.getByRole("button", { name: "לא יודע", exact: true }).click();
+  const definition = page.getByText(deck[0].definition, { exact: true });
+  await expect(definition).toBeVisible();
+  await expect(micOff).toBeVisible();
+  await definition.click();
+  await page.clock.runFor(1500);
+  await expect(definition).toBeVisible();
+  expect(await started()).toBe(2);
+
+  await page.getByRole("button", { name: "לכרטיס הבא" }).click();
+  await expect(micOn).toBeVisible();
+  expect(await started()).toBe(3);
 });
