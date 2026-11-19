@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { getNeonAuth } from "@/lib/neon-auth";
 
 export function proxy(request: NextRequest) {
-  return getNeonAuth()?.middleware({ publicRoutes: ["/setup-check", "/learn", "/infinite", "/sessions"] })(request);
+  return getNeonAuth()?.middleware({ publicRoutes: ["/setup-check", "/learn", "/infinite", "/sessions", "/decks/import"] })(request);
 }
 
 export const config = {
@@ -21,6 +21,10 @@ export const config = {
     },
     {
       source: "/sessions",
+      has: [{ type: "query", key: "neon_auth_session_verifier" }],
+    },
+    {
+      source: "/decks/import",
       has: [{ type: "query", key: "neon_auth_session_verifier" }],
     },
   ],

@@ -38,7 +38,10 @@ export function Microphone() {
   );
 }
 
-export function Study() {
+type Deck = { id: string; name: string; size: number; seen: number };
+
+export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: string }) {
+  const [deckId, setDeckId] = useState(initialDeck);
   const [state, setState] = useState<StudyState | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [hint, setHint] = useState<Hint | null>(null);
@@ -63,7 +66,7 @@ export function Study() {
   }
 
   async function show(action: "start" | "next") {
-    const data = await request<StudyState>({ action });
+    const data = await request<StudyState>({ action, deckId });
     active.current = data.prompt?.id ?? null;
     speechPending.current = null;
     lastSpoken.current = "";
@@ -155,7 +158,12 @@ export function Study() {
         {!state ? (
           <>
             <h1 ref={title} tabIndex={-1}>לימוד מילים</h1>
-            <p className={styles.definition}>מילים חדשות לפי סדר החפיסה, עם תרגול מהזיכרון.</p>
+            {decks.length > 1 && <label className={styles.deck}>חפיסה ללימוד
+              <select disabled={busy} value={deckId} onChange={(event) => setDeckId(event.target.value)}>
+                {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.name} · {deck.size} מילים</option>)}
+              </select>
+            </label>}
+            <Link className={styles.import} href="/decks/import">ייבוא מילים</Link>
           </>
         ) : feedback ? (
           <>
@@ -203,7 +211,10 @@ export function Study() {
           await show("start");
         })}>התחלה או המשך</button>
           : feedback ? <button className={styles.primary} disabled={busy} onClick={() => void run(() => show("next"))}>הכרטיס הבא</button>
-          : !prompt ? <Link href="/infinite" className={styles.primary}>לתרגול רציף</Link>
+          : !prompt ? <>
+            <Link href="/infinite" className={styles.primary}>לתרגול רציף</Link>
+            {decks.length > 1 && <button className={styles.secondary} onClick={() => setState(null)}>בחירת חפיסה</button>}
+          </>
           : prompt.kind === "intro" ? <button className={styles.primary} disabled={busy}
             onClick={() => void run(() => submit({ kind: "continue" }))}>להמשך</button>
           : prompt.kind === "reverse_choice" ? <div className={styles.choices}>

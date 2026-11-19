@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     if (action === "start" && (deckId === undefined || isUuid(deckId))) {
       return Response.json(await openLearn(user.id, true, deckId));
     }
-    if (action === "next") return Response.json(await openLearn(user.id, false));
+    if (action === "next" && (deckId === undefined || isUuid(deckId))) return Response.json(await openLearn(user.id, false, deckId));
     if (!isUuid(promptId)) return invalid();
     if (action === "hint" && (level === 1 || level === 2)) return Response.json(await revealHint(user.id, promptId, level));
     if (action === "answer") {

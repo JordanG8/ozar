@@ -1,0 +1,8 @@
+.mapping { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: .5rem; }
+.scroll table { border-collapse: collapse; width: 100%; min-width: 28rem; }
+.scroll th, .scroll td { padding: .5rem .75rem; text-align: start; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.scroll th { color: var(--muted); }
+.scroll tr:last-child td { border-bottom: 0; }
+label.header { display: flex; align-items: center; gap: .5rem; }
+@media (max-width: 30rem) { .mapping { grid-template-columns: 1fr; } }

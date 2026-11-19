@@ -38,10 +38,11 @@ export async function withLearner<T>(userId: string, run: (tx: Transaction, sett
   });
 }
 
-function getActiveRun(tx: Transaction, userId: string) {
-  return tx.select().from(learningRuns).where(and(
+function getActiveRun(tx: Transaction, userId: string, deckId?: string) {
+  return tx.select({ run: learningRuns }).from(learningRuns).innerJoin(decks, eq(decks.id, learningRuns.deckId)).where(and(
     eq(learningRuns.userId, userId), isNull(learningRuns.finishedAt),
-  )).orderBy(learningRuns.startedAt).limit(1).then(([run]) => run);
+    deckId ? and(eq(decks.id, deckId), sql`(${decks.ownerId} = ${userId} OR ${decks.kind} = 'builtin')`) : eq(decks.kind, "builtin"),
+  )).orderBy(learningRuns.startedAt).limit(1).then(([row]) => row?.run);
 }
 
 async function createRun(tx: Transaction, settings: Settings, deckId?: string) {
@@ -151,7 +152,7 @@ async function showReviewPrompt(tx: Transaction, prompt: Prompt, word: Word): Pr
 
 export function openLearn(userId: string, start: boolean, deckId?: string) {
   return withLearner(userId, async (tx, settings) => {
-    const run = await getActiveRun(tx, userId) ?? (start ? await createRun(tx, settings, deckId) : undefined);
+    const run = await getActiveRun(tx, userId, deckId) ?? (start ? await createRun(tx, settings, deckId) : undefined);
     return stateForRun(tx, settings, run);
   });
 }

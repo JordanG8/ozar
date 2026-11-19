@@ -81,6 +81,9 @@
   font-size: 1.125rem;
 }
 .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+.deck { display: grid; gap: .375rem; margin-block-start: 1.25rem; }
+.deck select { min-height: 3rem; background: var(--surface); color: var(--ink); border: 1px solid var(--muted); border-radius: .5rem; padding-inline: .625rem; font: inherit; }
+.import { display: inline-flex; min-height: 2.75rem; align-items: center; margin-block-start: .5rem; text-decoration: underline; color: var(--muted); }
 .signIn { max-width: 32rem; }
 .signIn > button { margin: 1.5rem 0 1rem; }
 .signIn input { display: block; margin-top: .25rem; }
