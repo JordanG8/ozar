@@ -17,6 +17,7 @@ function Menu() {
       <nav className={styles.menu} aria-label="מצבי תרגול">
         <Link className={styles.start} href="/learn">ללימוד מילים</Link>
         <Link className={styles.practice} href="/infinite">תרגול רציף</Link>
+        <Link className={styles.practice} href="/sessions">יומן תרגול</Link>
       </nav>
     </main>
   );

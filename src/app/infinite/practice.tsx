@@ -202,7 +202,7 @@ export function Practice() {
   return (
     <main className={styles.shell}>
       <header className={styles.head}>
-        <nav aria-label="ניווט בתרגול"><Link href="/?menu=1" className={study.brand}>אוצר</Link><Link href="/learn">מילים חדשות</Link></nav>
+        <nav aria-label="ניווט בתרגול"><Link href="/?menu=1" className={study.brand}>אוצר</Link><Link href="/sessions">יומן תרגול</Link></nav>
         <dl className={styles.stats}>
           <div><dt>זמן תרגול</dt><dd>{sessionTime}</dd></div>
           <div><dt>בכרטיס</dt><dd>{prompt && !feedback ? elapsed(clock - cardStart) : "—"}</dd></div>
