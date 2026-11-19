@@ -1,6 +1,7 @@
 "use client";
 
 import { createAuthClient } from "@neon/auth/next";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import type { Preferences } from "@/lib/settings";
 import styles from "../manage.module.css";
@@ -19,6 +20,7 @@ async function request(action: string, payload: object = {}) {
 }
 
 export function SettingsForm({ preferences, email }: { preferences: Preferences; email: string }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -76,7 +78,8 @@ export function SettingsForm({ preferences, email }: { preferences: Preferences;
         <button className={styles.linkButton} type="button" disabled={busy} onClick={() => void run(async () => {
           const { error } = await auth.signOut();
           if (error) throw new Error("היציאה נכשלה. אפשר לנסות שוב.");
-          window.location.assign("/?menu=1");
+          router.replace("/?menu=1");
+          router.refresh();
         })}>יציאה מהחשבון</button>
       </div>
       {confirming ? <form className={styles.form} onSubmit={(event) => {
@@ -84,7 +87,8 @@ export function SettingsForm({ preferences, email }: { preferences: Preferences;
         if (confirmation.trim() !== email) return;
         void run(async () => {
           await request("delete", { email, confirmed: true });
-          window.location.assign("/?menu=1");
+          router.replace("/?menu=1");
+          router.refresh();
         });
       }}>
         <p className={study.wrong}>המחיקה קבועה ותכלול את החשבון, החפיסות המיובאות והיסטוריית התרגול.</p>

@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
-import { Pool } from "@neondatabase/serverless";
+import { Pool } from "pg";
 import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/neon-serverless";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { getNeonAuth } from "@/lib/neon-auth";
 import {
   appUsers, cards, decks, learningQueue, learningRuns, reviewLogs, sessionPrompts,
@@ -13,7 +13,13 @@ import { exampleParts, matchMeaning, normalize } from "./matcher";
 import type { AnswerInput, Feedback, InfiniteState, StudyState } from "./protocol";
 import { nextStage, rateAnswer, selectQueued } from "./queue";
 
-const makeDb = (connectionString: string) => drizzle(new Pool({ connectionString, max: 3 }));
+const makeDb = (source: string) => {
+  const url = new URL(source);
+  if (url.hostname.endsWith(".neon.tech")) url.searchParams.set("sslmode", "verify-full");
+  const pool = new Pool({ connectionString: url.toString(), max: 3, connectionTimeoutMillis: 8_000 });
+  pool.on("error", (error) => console.error("Idle database connection failed", { type: error.name }));
+  return drizzle(pool);
+};
 let db: ReturnType<typeof makeDb> | undefined;
 export type Transaction = Parameters<Parameters<ReturnType<typeof makeDb>["transaction"]>[0]>[0];
 type Run = typeof learningRuns.$inferSelect;

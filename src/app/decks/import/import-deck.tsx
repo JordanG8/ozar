@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
 import { maxImportBytes, maxImportFileBytes, previewRows, type Mapping } from "@/lib/import/rows";
 import type { readSpreadsheet } from "@/lib/import/spreadsheet";
 import styles from "../../manage.module.css";
@@ -13,8 +13,10 @@ const columns = { term: "מילה", definition: "הגדרה", example: "דוגמ
 const pageSize = 25;
 const columnName = (index: number) => index < 26 ? String.fromCharCode(65 + index) : `A${String.fromCharCode(65 + index - 26)}`;
 const template = "data:text/csv;charset=utf-8," + encodeURIComponent("\uFEFFמילה,הגדרה,דוגמה\r\nאיתן,\"חזק, יציב\",הגשר נותר איתן גם בסערה.\r\n");
+const subscribe = () => () => {};
 
 export function ImportDeck() {
+  const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const [sheet, setSheet] = useState<Spreadsheet | null>(null);
   const [mapping, setMapping] = useState<Mapping>({ term: 0, definition: 1, example: -1 });
   const [header, setHeader] = useState(false);
@@ -104,7 +106,7 @@ export function ImportDeck() {
   return <form className={styles.form} onSubmit={save}>
     <p className={styles.muted}>בחרו קובץ CSV או XLSX. נתוני הגיליון הראשון יוצגו לפני השמירה.</p>
     <a className={styles.linkButton} href={template} download="ozar-template.csv">הורדת תבנית CSV</a>
-    <label>קובץ מילים<input type="file" accept=".csv,.xlsx" disabled={working} onChange={(event) => void pick(event)} /></label>
+    <label>קובץ מילים<input type="file" accept=".csv,.xlsx" disabled={!hydrated || working} onChange={(event) => void pick(event)} /></label>
     {sheet && <>
       <label>שם החפיסה<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={working} /></label>
       <div className={table.mapping}>

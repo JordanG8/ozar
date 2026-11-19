@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# אוצר · Ozar
 
-## Getting Started
+Ozar is a Hebrew vocabulary trainer for the Israeli psychometric exam. It includes 2,001 reviewed entries, guided Learn, continuous practice, session history, and private spreadsheet imports.
 
-First, run the development server:
+## Development
 
-```bash
+Use Node.js 24 or later. Set `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_AUTH_BASE_URL`, and `NEON_AUTH_COOKIE_SECRET` for your development environment.
+
+```sh
+npm ci
+npm run db:migrate
+npm run db:seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Vercel runs migrations and seeds the built-in deck before the Next.js build. The seed upserts by deck and position. The source PDF and editorial working files stay local.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Verification
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```sh
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npx playwright install chromium --only-shell
+npm run test:e2e
+```
 
-## Learn More
+Vitest tests the scheduler, Hebrew matcher, and spreadsheet parser. The database tests run against PGlite. Playwright exercises the production build over HTTP with a disposable PGlite database and a local email-code auth fixture. GitHub Actions runs the same checks.
 
-To learn more about Next.js, take a look at the following resources:
+## Session metrics
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Accuracy is the number of correct answers divided by the number of graded answers. Learn introductions are excluded. Session difficulty is the response-time-weighted mean of FSRS difficulty on its 1–10 scale. Each answer uses post-review difficulty when scheduling is applied and the current difficulty when scheduling is skipped. The weight is response time in milliseconds with a minimum of 250 ms. The calculation is `sum(difficulty × weight) / sum(weight)`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Installed copies use the same online service. The service worker stores a static offline message. Study and account data are saved in Neon.

@@ -4,9 +4,12 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle as pgDrizzle } from "drizzle-orm/pglite";
 import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint } from "./store";
 import { randomUUID } from "node:crypto";
+import { saveDeck, listDecks } from "../import/decks";
+import { getSessionDetails, listSessions } from "../sessions";
+import { deleteAccount, exportData, getPreferences, savePreferences } from "../settings";
 
 const runtime = vi.hoisted(() => ({ db: null }));
-vi.mock("drizzle-orm/neon-serverless", () => ({ drizzle: () => runtime.db }));
+vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: () => runtime.db }));
 vi.mock("@/lib/neon-auth", () => ({ getNeonAuth: () => null }));
 const postgres = new PGlite();
 const source = JSON.parse(await readFile("data/builtin-words.json", "utf8"));
@@ -148,4 +151,32 @@ it("resumes a real PostgreSQL queue, grades all prompt types, isolates users and
   const summary = await postgres.query("SELECT answers, correct, difficulty_1_10::float AS difficulty FROM sessions WHERE user_id='learner-a'");
   expect(summary.rows[0]).toMatchObject({answers:51, correct:50});
   expect(summary.rows[0].difficulty).toBeGreaterThanOrEqual(1);
+  const [session] = await listSessions("learner-a", 1);
+  const values = await postgres.query("SELECT response_ms, difficulty_for_session FROM review_logs WHERE session_id = $1", [session.id]);
+  const weights = values.rows.map(({ response_ms }) => Math.max(250, response_ms));
+  const difficulty = values.rows.reduce((sum, { difficulty_for_session }, index) => sum + difficulty_for_session * weights[index], 0) /
+    weights.reduce((sum, weight) => sum + weight, 0);
+  expect(session.difficulty1To10).toBeCloseTo(difficulty);
+  expect(session.accuracy).toBeCloseTo(50 / 51);
+  expect((await getSessionDetails("learner-a", session.id, 1)).answers[0].correct).toBe(false);
+  expect(await getSessionDetails("learner-b", session.id, 1)).toBeNull();
+});
+
+it("stores and exports private imported decks and protects data when identity deletion fails", async () => {
+  const userId = "import-learner";
+  const id = randomUUID();
+  const entries = [{ term: "איתן", definition: "חזק, יציב; עמיד", example: null }];
+  await savePreferences(userId, { newPerDay: 5, desiredRetention: .93, dailyGoal: 20, inputDefault: "typed" });
+  expect((await getPreferences(userId)).inputDefault).toBe("typed");
+  expect(await saveDeck(userId, id, "אישי", entries)).toEqual({ id });
+  expect(await saveDeck(userId, id, "אישי", entries)).toEqual({ id });
+  expect((await listDecks("different-user")).map(({ id }) => id)).not.toContain(id);
+  expect((await openLearn("different-user", true, id)).prompt).toBeNull();
+  expect((await openLearn(userId, true, id)).prompt.term).toBe("איתן");
+  expect((await exportData(userId)).words[0].acceptedAnswers).toEqual(["חזק", "יציב", "עמיד"]);
+  await expect(deleteAccount(userId, async () => { throw new Error("provider unavailable"); })).rejects.toThrow("provider unavailable");
+  expect((await exportData(userId)).decks).toHaveLength(1);
+  await deleteAccount(userId, async () => {});
+  expect(await exportData(userId)).toMatchObject({ learner: null, decks: [], words: [], cards: [], sessions: [] });
+  expect((await listDecks("different-user")).map(({ id }) => id)).toContain(builtIn);
 });
