@@ -15,6 +15,13 @@
       "when": 1795090786323,
       "tag": "0001_vocabulary_trainer",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795096121960,
+      "tag": "0002_infinite_practice",
+      "breakpoints": true
     }
   ]
 }

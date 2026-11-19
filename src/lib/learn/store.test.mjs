@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as pgDrizzle } from "drizzle-orm/pglite";
-import { answerPrompt, openLearn, revealHint } from "./store";
+import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint } from "./store";
+import { randomUUID } from "node:crypto";
 
 const runtime = vi.hoisted(() => ({ db: null }));
 vi.mock("drizzle-orm/neon-serverless", () => ({ drizzle: () => runtime.db }));
@@ -15,6 +16,7 @@ beforeAll(async () => {
   runtime.db = pgDrizzle(postgres);
   vi.stubEnv("DATABASE_URL", "postgresql://local/ozar_test");
   await postgres.exec(await readFile("drizzle/0001_vocabulary_trainer.sql", "utf8"));
+  await postgres.exec(await readFile("drizzle/0002_infinite_practice.sql", "utf8"));
   const deck = await postgres.query("INSERT INTO decks (kind, name) VALUES ('builtin', 'אוצר') RETURNING id");
   builtIn = deck.rows[0].id;
   for (const [index, word] of source.slice(0, 37).entries()) {
@@ -23,6 +25,66 @@ beforeAll(async () => {
       word.accepted_answers, word.unit, index + 1, word.difficulty,
     ]);
   }
+});
+
+it("practices only seen cards, enforces the cooldown and applies FSRS according to card state and date", async () => {
+  const userId = "infinite-learner";
+  const sessionId = randomUUID();
+  expect((await openInfinite(userId, sessionId)).prompt).toBeNull();
+  let learn = await openLearn(userId, true);
+  for (let index = 0; index < 6; index++) {
+    expect(learn.prompt.kind).toBe("intro");
+    await answerPrompt(userId, learn.prompt.id, { kind: "continue" });
+    learn = await openLearn(userId, false);
+  }
+  const pendingLearn = learn.prompt.id;
+  // Force one seen card to start graduated with yesterday as its last answer day.
+  await postgres.query(`
+    UPDATE cards SET state = 'review', last_answer_day = current_date - 1, stability = 6,
+      difficulty = 5, reps = 3, last_review_at = now() - interval '1 day'
+    WHERE user_id = $1 AND word_id = (SELECT id FROM words WHERE position = 1 AND deck_id = $2)
+  `, [userId, builtIn]);
+  const history = [];
+  let answered = 0;
+  for (let index = 0; index < 12; index++) {
+    const state = await openInfinite(userId, sessionId);
+    expect(state.answers).toBe(index);
+    const prompt = state.prompt;
+    expect((await openInfinite(userId, sessionId)).prompt.id).toBe(prompt.id);
+    expect(prompt.kind).toBe(index % 4 === 3 ? "reverse_choice" : "voice_meaning");
+    const row = (await postgres.query(`
+      SELECT words.position, cards.first_seen_at FROM session_prompts
+      JOIN cards ON cards.id = session_prompts.card_id JOIN words ON words.id = cards.word_id
+      WHERE session_prompts.id = $1
+    `, [prompt.id])).rows[0];
+    expect(row.first_seen_at).toBeTruthy();
+    expect(history.slice(-5)).not.toContain(row.position);
+    history.push(row.position);
+    const word = source[row.position - 1];
+    const correctChoice = prompt.kind === "reverse_choice" && prompt.choices.find(({ term }) => term === word.term);
+    const input = correctChoice ? { kind: "tap", choice: correctChoice.id } : {
+      kind: "voice", final: false, alternatives: ["לא יודע", word.accepted_answers[0]],
+    };
+    const result = await answerPrompt(userId, prompt.id, input, "infinite");
+    expect(result.feedback.correct).toBe(true);
+    answered++;
+    if (index === 0) {
+      await expect(markMatcherDispute("another-user", prompt.id, true)).rejects.toThrow();
+      expect(await markMatcherDispute(userId, prompt.id, true)).toEqual({ disputed: true });
+      await expect(answerPrompt("another-user", prompt.id, input, "infinite")).rejects.toThrow();
+    }
+  }
+  expect(answered).toBe(12);
+  const graded = (await postgres.query(`
+    SELECT words.position, review_logs.applied_to_fsrs AS applied FROM review_logs
+    JOIN cards ON cards.id = review_logs.card_id JOIN words ON words.id = cards.word_id
+    JOIN session_prompts ON session_prompts.id = review_logs.prompt_id
+    WHERE review_logs.session_id = $1 ORDER BY session_prompts.ordinal
+  `, [sessionId])).rows;
+  expect(graded.filter(({ position }) => position === 1).map(({ applied }) => applied)).toEqual([true, false]);
+  expect(graded.filter(({ position }) => position !== 1).every(({ applied }) => applied)).toBe(true);
+  expect((await openLearn(userId, false)).prompt.id).toBe(pendingLearn);
+  expect(await openInfinite(userId, sessionId)).toMatchObject({ correct: 12, combo: 12, best: 12, today: 12, streak: 1 });
 });
 
 afterAll(async () => { vi.unstubAllEnvs(); await postgres.close(); });

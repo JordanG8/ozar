@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 
 const auth = createAuthClient();
 
-export function SignInCheck({ signedIn, callbackPath = "/setup-check" }: { signedIn: boolean; callbackPath?: "/setup-check" | "/learn" }) {
+export function SignInCheck({ signedIn, callbackPath = "/setup-check" }: { signedIn: boolean; callbackPath?: string }) {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [sent, setSent] = useState(false);

@@ -8,9 +8,9 @@ import { useSpeech } from "./use-speech";
 import styles from "./study.module.css";
 
 type Hint = { hintLevel: number; example: string | null; letters: string | null };
-type Receipt = { accepted: boolean; feedback: Feedback | null };
+export type Receipt = { accepted: boolean; feedback: Feedback | null };
 
-async function request<T>(body: object): Promise<T> {
+export async function request<T>(body: object): Promise<T> {
   const response = await fetch("/api/learn", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -22,14 +22,14 @@ async function request<T>(body: object): Promise<T> {
   return response.json();
 }
 
-function Example({ example, term }: { example: string | null; term: string }) {
+export function Example({ example, term }: { example: string | null; term: string }) {
   if (!example) return null;
   const parts = exampleParts(example, term);
   return <p className={styles.example}>{parts.map(({ text, highlighted, start }) =>
     highlighted ? <strong key={start}>{text}</strong> : text)}</p>;
 }
 
-function Microphone() {
+export function Microphone() {
   return (
     <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
       <rect x="9" y="3" width="6" height="12" rx="3" />
@@ -144,7 +144,7 @@ export function Study() {
   return (
     <main className={styles.shell}>
       <header className={styles.top}>
-        <Link href="/" className={styles.brand}>אוצר</Link>
+        <Link href="/?menu=1" className={styles.brand}>אוצר</Link>
         <span>לימוד</span>
         {state && state.total > 0 ? <span className={styles.count} aria-label={`${progressed} מתוך ${state.total} מילים הושלמו`}>
           <bdi>{progressed} / {state.total}</bdi>
@@ -203,7 +203,7 @@ export function Study() {
           await show("start");
         })}>התחלה או המשך</button>
           : feedback ? <button className={styles.primary} disabled={busy} onClick={() => void run(() => show("next"))}>הכרטיס הבא</button>
-          : !prompt ? <Link href="/" className={styles.secondary}>חזרה לאוצר</Link>
+          : !prompt ? <Link href="/infinite" className={styles.primary}>לתרגול רציף</Link>
           : prompt.kind === "intro" ? <button className={styles.primary} disabled={busy}
             onClick={() => void run(() => submit({ kind: "continue" }))}>להמשך</button>
           : prompt.kind === "reverse_choice" ? <div className={styles.choices}>

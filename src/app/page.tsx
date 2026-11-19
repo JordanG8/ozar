@@ -1,7 +1,12 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { connection } from "next/server";
+import { Suspense } from "react";
+import { getNeonAuth } from "@/lib/neon-auth";
+import { hasUsedInfinite } from "@/lib/learn/store";
 import styles from "./page.module.css";
 
-export default function Home() {
+function Menu() {
   return (
     <main className={styles.home}>
       <header className={styles.header}>אוצר מילים לפסיכומטרי</header>
@@ -9,7 +14,24 @@ export default function Home() {
         <h1>אוֹצָר</h1>
         <p>לומדים מילים בעברית ומתרגלים לזכור את המשמעות, בקול או בהקלדה.</p>
       </section>
-      <Link className={styles.start} href="/learn">ללימוד מילים</Link>
+      <nav className={styles.menu} aria-label="מצבי תרגול">
+        <Link className={styles.start} href="/learn">ללימוד מילים</Link>
+        <Link className={styles.practice} href="/infinite">תרגול רציף</Link>
+      </nav>
     </main>
   );
+}
+
+async function Destination({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
+  await connection();
+  const { menu } = await searchParams;
+  if (menu !== "1") {
+    const user = (await getNeonAuth()?.getSession())?.data?.user;
+    if (user && await hasUsedInfinite(user.id)) redirect("/infinite");
+  }
+  return <Menu />;
+}
+
+export default function Home({ searchParams }: PageProps<"/">) {
+  return <Suspense fallback={<Menu />}><Destination searchParams={searchParams} /></Suspense>;
 }

@@ -133,6 +133,8 @@ export const sessions = pgTable("sessions", {
   durationMs: integer("duration_ms").default(0).notNull(),
   answers: integer("answers").default(0).notNull(),
   correct: integer("correct").default(0).notNull(),
+  combo: integer("combo").default(0).notNull(),
+  bestCombo: integer("best_combo").default(0).notNull(),
   accuracy: doublePrecision("accuracy").generatedAlwaysAs(
     sql`CASE WHEN "answers" = 0 THEN 0 ELSE "correct"::double precision / "answers" END`,
   ),
@@ -204,6 +206,7 @@ export const reviewLogs = pgTable("review_logs", {
   elapsedDays: doublePrecision("elapsed_days").notNull(),
   scheduledDays: doublePrecision("scheduled_days").notNull(),
   difficultyForSession: doublePrecision("difficulty_for_session").notNull(),
+  matcherDisputed: boolean("matcher_disputed").default(false).notNull(),
 }, (table) => [
   foreignKey({
     name: "review_logs_user_prompt_fk",

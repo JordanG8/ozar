@@ -30,3 +30,12 @@
 }
 .start:hover { background: #ffcf61; }
 @media (prefers-reduced-motion: reduce) { .start { transition: none; } }
+.menu { display: grid; gap: .5rem; }
+.practice {
+  min-height: 3rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--muted);
+  border-radius: .5rem;
+  font-weight: 700;
+}

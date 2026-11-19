@@ -1,5 +1,5 @@
 import { getNeonAuth } from "@/lib/neon-auth";
-import { answerPrompt, openLearn, revealHint, StudyConflict } from "@/lib/learn/store";
+import { answerPrompt, markMatcherDispute, openInfinite, openLearn, revealHint, StudyConflict } from "@/lib/learn/store";
 import type { AnswerInput } from "@/lib/learn/protocol";
 
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
@@ -33,7 +33,19 @@ export async function POST(request: Request) {
     let payload;
     try { payload = JSON.parse(raw); } catch { return invalid(); }
     if (!payload || typeof payload !== "object") return invalid();
-    const { action, deckId, promptId, level, input } = payload;
+    const { action, deckId, promptId, level, input, mode, sessionId, disputed } = payload;
+    if (mode === "infinite") {
+      if (action === "next" && isUuid(sessionId)) return Response.json(await openInfinite(user.id, sessionId));
+      if (!isUuid(promptId)) return invalid();
+      if (action === "dispute" && typeof disputed === "boolean") {
+        return Response.json(await markMatcherDispute(user.id, promptId, disputed));
+      }
+      if (action === "answer") {
+        const answer = parseAnswer(input);
+        if (answer && answer.kind !== "continue") return Response.json(await answerPrompt(user.id, promptId, answer, mode));
+      }
+      return invalid();
+    }
     if (action === "start" && (deckId === undefined || isUuid(deckId))) {
       return Response.json(await openLearn(user.id, true, deckId));
     }

@@ -19,6 +19,20 @@ export type Feedback = {
   example: string | null;
 };
 
+export type InfiniteState = {
+  prompt: Exclude<StudyPrompt, { kind: "intro" }> | null;
+  inputDefault: "voice" | "typed";
+  startedAt: string;
+  answers: number;
+  correct: number;
+  averageMs: number;
+  combo: number;
+  best: number;
+  today: number;
+  goal: number;
+  streak: number;
+};
+
 export type AnswerInput =
   | { kind: "continue" }
   | { kind: "tap"; choice: string }
