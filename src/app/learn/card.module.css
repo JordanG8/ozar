@@ -64,6 +64,12 @@
 @keyframes settle { from { opacity: 0; transform: scale(.96); } }
 .milestoneLabel { font-size: 1.375rem; font-weight: 500; }
 
+/* On-screen keyboard open: the card shrinks to what is left above the answer field. */
+:global(:root[data-keyboard="open"]) .card { min-height: 0; padding: 1rem; border-radius: 1.25rem; }
+:global(:root[data-keyboard="open"]) .content { gap: .5rem; overflow: hidden; }
+:global(:root[data-keyboard="open"]) .term { font-size: clamp(1.75rem, 9vw, 2.5rem); line-height: 1.25; }
+:global(:root[data-keyboard="open"]) .top:empty { display: none; }
+
 /* Hints (learn only). */
 .hint { display: flex; flex-direction: column; align-items: center; gap: .25rem; animation: rise 200ms var(--ease) both; }
 .hint > span { color: var(--dim); font-size: .8125rem; }
@@ -103,6 +109,9 @@
   transition: background 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease), transform 120ms var(--ease);
 }
 .disk:active { transform: scale(.96); }
+/* Hold to talk: no long-press menu, selection or scroll gesture may steal the press. */
+.disk[data-hold] { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.diskWrap[data-state="listening"] .disk[data-hold] { transform: scale(1.06); }
 .diskWrap[data-state="listening"] .disk { border-color: var(--accent); background: var(--accent); color: var(--background); }
 .diskWrap[data-state="judging"] .disk { color: var(--faint); }
 .diskWrap[data-state="off"] .disk { color: var(--faint); border-style: dashed; }

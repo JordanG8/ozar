@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode, Ref } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode, Ref } from "react";
 import { exampleParts } from "@/lib/learn/matcher";
 import { Icon } from "../icons";
 import styles from "./card.module.css";
@@ -68,10 +68,37 @@ export function Tally({ count, large }: { count: number; large?: boolean }) {
 
 export type DiskState = "listening" | "rest" | "judging" | "countdown" | "continue" | "off";
 
-export function MicDisk({ state, tone = "correct", duration = 900, label, onClick, disabled, runKey }: {
+const holdKeys = new Set([" ", "Enter"]);
+
+export function MicDisk({ state, tone = "correct", duration = 900, label, onClick, onPress, onRelease, disabled, runKey }: {
   state: DiskState; tone?: Tone; duration?: number; label: string; onClick?: () => void; disabled?: boolean; runKey?: string;
+  /** Press-and-hold mode: onPress on the way down, onRelease when the pointer or key lifts. */
+  onPress?: () => void; onRelease?: () => void;
 }) {
   const icon = state === "countdown" ? "check" : state === "off" ? "micOff" : "mic";
+  const hold: ButtonHTMLAttributes<HTMLButtonElement> = onPress ? {
+    onPointerDown: (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onPress();
+    },
+    onPointerUp: onRelease,
+    onPointerCancel: onRelease,
+    onLostPointerCapture: onRelease,
+    onBlur: onRelease,
+    onKeyDown: (event) => {
+      if (!holdKeys.has(event.key)) return;
+      event.preventDefault();
+      if (!event.repeat) onPress();
+    },
+    onKeyUp: (event) => {
+      if (!holdKeys.has(event.key)) return;
+      event.preventDefault();
+      onRelease?.();
+    },
+    onContextMenu: (event) => event.preventDefault(),
+  } : { onClick };
   return (
     <div className={styles.diskWrap} data-state={state} data-tone={tone}>
       {state === "listening" && <><i aria-hidden="true" className={styles.wave} /><i aria-hidden="true" className={`${styles.wave} ${styles.late}`} /></>}
@@ -80,8 +107,9 @@ export function MicDisk({ state, tone = "correct", duration = 900, label, onClic
         <circle cx="56" cy="56" r="54" pathLength="100" className={styles.timerTrack} />
         <circle cx="56" cy="56" r="54" pathLength="100" className={styles.timerArc} />
       </svg>}
-      <button type="button" className={styles.disk} aria-label={label} aria-pressed={state === "listening" ? true : undefined}
-        onClick={onClick} disabled={disabled}>
+      <button type="button" className={styles.disk} aria-label={label}
+        aria-pressed={onPress ? state === "listening" : state === "listening" ? true : undefined}
+        data-hold={onPress ? true : undefined} disabled={disabled} {...hold}>
         <Icon name={icon} size={30} />
       </button>
     </div>

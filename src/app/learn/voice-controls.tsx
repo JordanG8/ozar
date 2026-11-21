@@ -37,13 +37,11 @@ export function VoiceControls({ speech, typing, value, field, spoken, busy, inpu
   const error = !spoken && speech.speechError;
   return <>
     <Transcript tone={error ? "dim" : undefined}>{spoken || speech.speechError}</Transcript>
-    <MicDisk state={speech.listening || speech.recording ? "listening" : "rest"}
-      label={speech.recording ? "עצירת הקלטה" : "מענה בקול"} disabled={busy || speech.finishing}
-      onClick={() => speech.recording ? speech.finish() : speech.start()} />
-    <p className={styles.status} role="status" data-listening={speech.listening}>
-      {speech.finishing ? "מסיים זיהוי…" : speech.micStatus}
-    </p>
-    {speech.showTranscriptionNotice && <p className={styles.status}>הקלטות קצרות נשלחות לתמלול.</p>}
+    <MicDisk state={speech.recording ? "listening" : speech.finishing ? "judging" : "rest"}
+      label="מענה בקול · יש ללחוץ ולהחזיק" disabled={busy || speech.finishing}
+      onPress={() => void speech.press()} onRelease={speech.release} />
+    <p className={styles.status} role="status" data-listening={speech.listening}>{speech.micStatus}</p>
+    {speech.showTranscriptionNotice && <p className={styles.status}>ההקלטה נשלחת לתמלול בזמן ההחזקה.</p>}
     <div className={styles.row}>
       <button type="button" className={ui.quiet} aria-label="מענה בהקלדה" disabled={busy} onClick={onToggle}>
         <Icon name="keyboard" />מקלדת

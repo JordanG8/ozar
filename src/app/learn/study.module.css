@@ -1,7 +1,7 @@
 /* Study chrome shared by Infinite and Learn: stats or progress on top, the card, then the mic zone. */
 .shell {
   width: min(100%, var(--column));
-  height: 100svh;
+  height: var(--keyboard-viewport, 100svh);
   min-height: 36rem;
   margin-inline: auto;
   display: grid;
@@ -122,6 +122,21 @@
   .stats, .progressHead { min-height: 4.5rem; padding-top: 2.5rem; padding-bottom: .75rem; }
   .controls { min-height: 11.5rem; }
 }
+/* On-screen keyboard open: everything fits above it. The header tightens, the card gives up its
+   minimum height and the answer row sits right on the keyboard, so nothing scrolls or jumps. */
+:global(:root[data-keyboard="open"]) .shell { min-height: 0; padding-bottom: 0; }
+:global(:root[data-keyboard="open"]) .stats,
+:global(:root[data-keyboard="open"]) .progressHead {
+  min-height: 0;
+  padding-top: max(.5rem, env(safe-area-inset-top));
+  padding-bottom: .5rem;
+}
+:global(:root[data-keyboard="open"]) .stats { padding-inline: 3.5rem; }
+:global(:root[data-keyboard="open"]) .close { top: max(0rem, env(safe-area-inset-top)); }
+:global(:root[data-keyboard="open"]) .stage { padding-block: .25rem .5rem; }
+:global(:root[data-keyboard="open"]) .controls { min-height: 0; gap: .25rem; padding-block: 0 .5rem; justify-content: flex-end; }
+:global(:root[data-keyboard="open"]) .controls .status:empty { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .stats dd, .progress i, .send { transition: none; }
   .endNumber, .goal circle:last-child { animation: none; stroke-dashoffset: 0; }

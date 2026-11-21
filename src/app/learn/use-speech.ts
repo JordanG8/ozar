@@ -1,168 +1,283 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useQuietSpeech } from "./use-quiet-speech";
+import { createGateway, experimental_streamTranscribe as streamTranscribe } from "ai";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  encodePcm16, encodeVoiceClip, maxVoiceSeconds, minVoiceSamples, voiceModel, voiceProviderOptions, voiceSampleRate,
+} from "@/lib/learn/voice-audio";
 
-type RecognitionResult = { isFinal: boolean; length: number; [index: number]: { transcript: string } };
-interface Recognition extends EventTarget {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  maxAlternatives: number;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: { resultIndex: number; results: ArrayLike<RecognitionResult> }) => void) | null;
-  onaudiostart: (() => void) | null;
-  onaudioend: (() => void) | null;
-  onend: (() => void) | null;
-  onspeechend: (() => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
-}
-type SpeechWindow = Window & {
-  SpeechRecognition?: new () => Recognition;
-  webkitSpeechRecognition?: new () => Recognition;
+type Phase = "off" | "opening" | "listening" | "finishing";
+type Ticket = { token: string; baseURL: string; expiresAt: number };
+
+type Capture = {
+  controller: AbortController;
+  stream?: MediaStream;
+  source?: MediaStreamAudioSourceNode;
+  worklet?: AudioWorkletNode;
+  audio?: ReadableStreamDefaultController<Uint8Array>;
+  transcript?: Promise<string>;
+  timer?: number;
+  frames: Float32Array[];
+  samples: number;
+  voiced: number;
+  released: boolean;
 };
 
-function useBrowserSpeech(
-  promptId: string | null,
-  enabled: boolean,
-  onSpeech: (alternatives: string[], ended: boolean) => void,
-) {
-  const [phase, setPhase] = useState<"off" | "opening" | "listening" | "finishing">("off");
-  const [speechError, setSpeechError] = useState("");
-  const instance = useRef<Recognition | null>(null);
-  const attemptedPrompt = useRef<string | null>(null);
-  const boundary = useRef<number | undefined>(undefined);
-  const listener = useRef(onSpeech);
+const noSpeech = "לא נקלט דיבור. אפשר לנסות שוב.";
+const holdToTalk = "יש להחזיק את הכפתור בזמן הדיבור.";
+const failed = "התמלול לא הצליח. אפשר לנסות שוב או להקליד תשובה.";
+// After release the Gateway only has to finish the turn. Fall back to uploading the clip if it stalls.
+const streamGraceMs = 3500;
 
-  useEffect(() => {
-    listener.current = onSpeech;
-  }, [onSpeech]);
-
-  const stop = useCallback(() => {
-    window.clearTimeout(boundary.current);
-    const recognition = instance.current;
-    instance.current = null;
-    if (recognition) {
-      recognition.onresult = null;
-      recognition.onaudiostart = null;
-      recognition.onaudioend = null;
-      recognition.onerror = null;
-      recognition.onend = null;
-      recognition.onspeechend = null;
-      recognition.abort();
-    }
-    setPhase("off");
-  }, []);
-
-  const start = useCallback(() => {
-    if (!enabled || !promptId || instance.current) return;
-    attemptedPrompt.current = promptId;
-    const speechWindow = window as SpeechWindow;
-    const BrowserRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
-    if (!BrowserRecognition) {
-      setSpeechError("הדפדפן הזה אינו תומך בזיהוי דיבור. אפשר להקליד תשובה.");
-      return;
-    }
-    const recognition = new BrowserRecognition();
-    instance.current = recognition;
-    recognition.lang = "he-IL";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 5;
-    let latest: string[] = [];
-    let submitted = false;
-    let canSubmit = true;
-    function submitUtterance() {
-      if (!canSubmit || submitted || !latest.length) return;
-      submitted = true;
-      listener.current(latest, true);
-    }
-    recognition.onaudiostart = () => setPhase("listening");
-    recognition.onaudioend = () => setPhase("finishing");
-    recognition.onresult = ({ results, resultIndex }) => {
-      const result = results[resultIndex];
-      if (!result || submitted) return;
-      const previous = Array.from({ length: resultIndex }, (_, index) => results[index]?.[0]?.transcript ?? "").join(" ").trim();
-      const alternatives = Array.from(result, ({ transcript }) =>
-        [previous, transcript.trim()].filter(Boolean).join(" ").slice(0, 300)).filter(Boolean);
-      if (!alternatives.length) return;
-      latest = alternatives;
-      listener.current(alternatives, false);
-    };
-    recognition.onspeechend = () => {
-      // Give the recognizer a brief chance to revise the last interim result.
-      window.clearTimeout(boundary.current);
-      boundary.current = window.setTimeout(submitUtterance, 140);
-    };
-    recognition.onerror = ({ error }) => {
-      if (error === "aborted") return;
-      canSubmit = false;
-      setPhase("off");
-      setSpeechError(error === "no-speech" ? "לא נקלט דיבור. אפשר להפעיל שוב את המיקרופון."
-        : "זיהוי הדיבור אינו זמין כרגע. אפשר להקליד תשובה.");
-    };
-    recognition.onend = () => {
-      if (instance.current !== recognition) return;
-      window.clearTimeout(boundary.current);
-      instance.current = null;
-      setPhase("off");
-      submitUtterance();
-      if (canSubmit && !submitted) setSpeechError("לא נקלט דיבור. אפשר להפעיל שוב את המיקרופון.");
-    };
-    try {
-      setSpeechError("");
-      setPhase("opening");
-      recognition.start();
-    } catch {
-      instance.current = null;
-      setPhase("off");
-      setSpeechError("המיקרופון אינו זמין כרגע. אפשר להקליד תשובה.");
-    }
-  }, [enabled, promptId]);
-
-  const finish = useCallback(() => {
-    if (instance.current) instance.current.stop();
-  }, []);
-
-  useEffect(() => {
-    // Schedule the first attempt so discarded Strict Mode renders never open the mic.
-    const first = enabled && attemptedPrompt.current !== promptId ? window.setTimeout(start, 0) : undefined;
-    return () => {
-      window.clearTimeout(first);
-      stop();
-    };
-  }, [enabled, promptId, start, stop]);
-
-  return { phase, speechError, start, stop, finish };
+async function fetchTicket(): Promise<Ticket> {
+  const response = await fetch("/api/transcribe/token", { method: "POST" });
+  if (!response.ok) throw new Error("Voice token request failed");
+  return response.json();
 }
 
-function isAndroid() {
-  return /Android/iu.test(navigator.userAgent) ||
-    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform === "Android";
+function closeAudio(capture: Capture) {
+  try { capture.audio?.close(); } catch { /* Already closed or errored. */ }
+  capture.audio = undefined;
 }
 
-const subscribe = () => () => {};
-const serverPlatform = () => null;
+function releaseMicrophone(capture: Capture) {
+  window.clearTimeout(capture.timer);
+  if (capture.worklet) {
+    capture.worklet.port.onmessage = null;
+    capture.worklet.disconnect();
+  }
+  capture.source?.disconnect();
+  capture.stream?.getTracks().forEach((track) => track.stop());
+  capture.stream = undefined;
+  capture.source = undefined;
+  capture.worklet = undefined;
+}
 
+async function transcribeClip(capture: Capture) {
+  const response = await fetch("/api/transcribe", {
+    method: "POST", headers: { "Content-Type": "audio/wav" },
+    body: encodeVoiceClip(capture.frames, capture.samples),
+    signal: AbortSignal.any([capture.controller.signal, AbortSignal.timeout(7000)]),
+  });
+  if (!response.ok) throw new Error("Transcription request failed");
+  const { text }: { text: string } = await response.json();
+  return text;
+}
+
+// Push to talk: the mic opens only while the learner holds the button. From the press on, PCM frames stream
+// over a WebSocket to AI Gateway, so when the learner lets go only the end of the turn is left to transcribe.
 export function useSpeech(
   promptId: string | null,
   enabled: boolean,
   onSpeech: (alternatives: string[], ended: boolean) => void,
 ) {
-  const android = useSyncExternalStore(subscribe, isAndroid, serverPlatform);
-  const browser = useBrowserSpeech(promptId, enabled && android === false, onSpeech);
-  const quiet = useQuietSpeech(promptId, enabled && android === true, (text) => onSpeech([text], true));
-  const { phase, ...controls } = android ? quiet : browser;
+  const [phase, setPhase] = useState<Phase>("off");
+  const [speechError, setSpeechError] = useState("");
+  const [used, setUsed] = useState(false);
+  const active = useRef<Capture | null>(null);
+  const context = useRef<AudioContext | null>(null);
+  const worklet = useRef<Promise<void> | null>(null);
+  const ticket = useRef<Promise<Ticket> | null>(null);
+  const listener = useRef(onSpeech);
+  useEffect(() => { listener.current = onSpeech; }, [onSpeech]);
+
+  const wanted = useRef(false);
+  useEffect(() => { wanted.current = enabled; }, [enabled]);
+
+  const prepare = useCallback(function prepare() {
+    // Warm up everything that does not need the mic, so a press goes straight to capture.
+    try {
+      context.current ??= new AudioContext();
+      if (!worklet.current) {
+        const loading = context.current.audioWorklet.addModule("/voice-capture.js");
+        worklet.current = loading;
+        loading.catch(() => { if (worklet.current === loading) worklet.current = null; });
+      }
+    } catch {
+      // The press reports the error.
+    }
+    const pending = ticket.current;
+    if (!pending) {
+      const next = fetchTicket();
+      ticket.current = next;
+      next.then((value) => {
+        // Gateway secrets are short-lived. Drop one before it expires so the next press mints a fresh one.
+        const wait = value.expiresAt * 1000 - Date.now() - 15_000;
+        window.setTimeout(() => {
+          if (ticket.current !== next) return;
+          ticket.current = null;
+          if (wanted.current) prepare();
+        }, Math.max(0, wait));
+      }, () => { if (ticket.current === next) ticket.current = null; });
+    }
+  }, []);
+
+  const takeTicket = useCallback(async () => {
+    const pending = ticket.current ?? fetchTicket();
+    ticket.current = null;
+    const value = await pending;
+    return value.expiresAt * 1000 - Date.now() > 3000 ? value : fetchTicket();
+  }, []);
+
+  const stop = useCallback(() => {
+    const capture = active.current;
+    active.current = null;
+    if (capture) {
+      capture.controller.abort();
+      releaseMicrophone(capture);
+      try { capture.audio?.error(new Error("Stopped")); } catch { /* Already closed. */ }
+      capture.audio = undefined;
+    }
+    if (context.current?.state === "running") void context.current.suspend().catch(() => {});
+    setPhase("off");
+  }, []);
+
+  const finish = useCallback(async (capture: Capture) => {
+    releaseMicrophone(capture);
+    closeAudio(capture);
+    if (active.current !== capture) return;
+    if (capture.voiced < minVoiceSamples) {
+      stop();
+      setSpeechError(capture.samples < voiceSampleRate * 0.4 ? holdToTalk : noSpeech);
+      return;
+    }
+    setPhase("finishing");
+    let text = "";
+    try {
+      let timer: number | undefined;
+      const grace = new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("Streaming transcription stalled")), streamGraceMs);
+      });
+      try {
+        text = await Promise.race([capture.transcript!, grace]);
+      } catch {
+        if (active.current !== capture) return;
+        text = await transcribeClip(capture);
+      } finally {
+        window.clearTimeout(timer);
+      }
+      if (active.current !== capture) return;
+      text = text.trim().slice(0, 300);
+      if (text) listener.current([text], true);
+      else setSpeechError(noSpeech);
+    } catch {
+      if (active.current === capture) setSpeechError(failed);
+    } finally {
+      if (active.current === capture) stop();
+    }
+  }, [stop]);
+
+  const release = useCallback(() => {
+    const capture = active.current;
+    if (!capture || capture.released) return;
+    capture.released = true;
+    // A release while the mic is still opening finishes once it opens.
+    if (capture.worklet) void finish(capture);
+  }, [finish]);
+
+  const press = useCallback(async () => {
+    if (!enabled || !promptId || active.current) return;
+    const capture: Capture = { controller: new AbortController(), frames: [], samples: 0, voiced: 0, released: false };
+    active.current = capture;
+    setSpeechError("");
+    setPhase("opening");
+    prepare();
+    const audioContext = context.current;
+    // Resume inside the press so browsers that need a gesture allow audio.
+    const resume = audioContext?.resume();
+    void resume?.catch(() => {});
+
+    // Open the Gateway stream right away. Frames queue in the stream until the socket is open.
+    const audio = new ReadableStream<Uint8Array>({ start: (controller) => { capture.audio = controller; } });
+    capture.transcript = (async () => {
+      const { token, baseURL } = await takeTicket();
+      if (active.current === capture) prepare();
+      const result = streamTranscribe({
+        model: createGateway({ apiKey: token, baseURL }).transcription(voiceModel),
+        audio, inputAudioFormat: { type: "audio/pcm", rate: voiceSampleRate },
+        providerOptions: voiceProviderOptions, abortSignal: capture.controller.signal,
+      });
+      let settled = "";
+      let partial = "";
+      for await (const part of result.fullStream) {
+        if (part.type === "error") throw part.error;
+        if (part.type === "transcript-delta") partial += part.delta;
+        else if (part.type === "transcript-partial") partial = part.text;
+        else if (part.type === "transcript-final") {
+          settled = [settled, part.text.trim()].filter(Boolean).join(" ");
+          partial = "";
+        } else continue;
+        const interim = [settled, partial.trim()].filter(Boolean).join(" ").slice(0, 300);
+        if (interim && active.current === capture && !capture.released) listener.current([interim], false);
+      }
+      return await result.text;
+    })();
+    capture.transcript.catch(() => {});
+
+    try {
+      if (!audioContext) throw new Error("Web Audio is unavailable");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      if (active.current !== capture) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      capture.stream = stream;
+      await Promise.all([resume, worklet.current]);
+      if (active.current !== capture) return;
+      const node = new AudioWorkletNode(audioContext, "ozar-voice-capture", { channelCount: 1, channelCountMode: "explicit" });
+      capture.worklet = node;
+      node.port.onmessage = ({ data: frame }: MessageEvent<Float32Array>) => {
+        if (active.current !== capture || !capture.worklet) return;
+        let energy = 0;
+        for (const sample of frame) energy += sample * sample;
+        capture.frames.push(frame);
+        capture.samples += frame.length;
+        if (energy / frame.length > 0.000225) capture.voiced += frame.length;
+        try { capture.audio?.enqueue(encodePcm16(frame)); } catch { /* The stream failed. The fallback still has the clip. */ }
+      };
+      capture.source = audioContext.createMediaStreamSource(stream);
+      // The worklet posts PCM to its port. Its audio output is silent.
+      capture.source.connect(node).connect(audioContext.destination);
+      capture.timer = window.setTimeout(release, maxVoiceSeconds * 1000);
+      setUsed(true);
+      setPhase("listening");
+      if (capture.released) void finish(capture);
+    } catch {
+      if (active.current !== capture) return;
+      stop();
+      setSpeechError("המיקרופון אינו זמין כרגע. אפשר להקליד תשובה.");
+    }
+  }, [enabled, promptId, prepare, takeTicket, finish, release, stop]);
+
+  useEffect(() => {
+    if (enabled) prepare();
+    const pauseIfHidden = () => { if (document.hidden) stop(); };
+    if (enabled) document.addEventListener("visibilitychange", pauseIfHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", pauseIfHidden);
+      stop();
+    };
+  }, [enabled, promptId, prepare, stop]);
+
+  useEffect(() => () => {
+    void context.current?.close().catch(() => {});
+    context.current = null;
+    worklet.current = null;
+  }, []);
+
   const currentPhase = enabled ? phase : "off";
   return {
     listening: currentPhase === "listening",
     recording: currentPhase === "opening" || currentPhase === "listening",
     finishing: currentPhase === "finishing",
-    micStatus: currentPhase === "opening" ? "פותח מיקרופון…" :
-      currentPhase === "listening" ? "המיקרופון פעיל" : "המיקרופון כבוי",
-    ...controls,
-    showTranscriptionNotice: android === true && quiet.needsActivation,
+    micStatus: !enabled ? "המיקרופון כבוי" : currentPhase === "opening" ? "פותח מיקרופון…" :
+      currentPhase === "listening" ? "מקשיב · שחררו לסיום" : currentPhase === "finishing" ? "מסיים זיהוי…" : "החזיקו כדי לדבר",
+    speechError,
+    press,
+    release,
+    stop,
+    showTranscriptionNotice: !used,
   };
 }

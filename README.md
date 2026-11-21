@@ -32,7 +32,7 @@ Vitest tests the scheduler, Hebrew matcher, and spreadsheet parser. The database
 
 The deterministic matcher handles live speech results. On submission or speech end, unmatched answers go to Gemini Decision 1 through Vercel AI Gateway. The app sends the term, definition, and submitted text. The judge function runs in Frankfurt and uses Vercel OIDC. Accepted paraphrases are remembered for the current account and word. Partial grades count as correct and receive at most Hard. When the judge times out, the learner can grade the card manually.
 
-On Android, Ozar captures short recordings directly and sends them to GPT Transcribe through AI Gateway at the end of speech. The first capture begins when the learner taps the mic. Audio is released before transcription, and Ozar saves the transcript with the answer. The recording is not stored in Ozar.
+Voice answers are push to talk: the mic opens only while the learner holds the mic button, and nothing is captured on its own. On every platform, the server mints a single-use AI Gateway secret (valid for up to five minutes) ahead of the press, so the browser opens the Gateway's streaming transcription WebSocket the moment the button goes down and streams 24 kHz PCM to GPT Transcribe while the learner speaks. On release only the end of the turn is left to transcribe. If the stream fails or stalls, the captured clip is uploaded to `/api/transcribe` instead. Audio is released on release, and Ozar saves the transcript with the answer. The recording is not stored in Ozar.
 
 ## Session metrics
 

@@ -1,6 +1,9 @@
-export const voiceSampleRate = 16_000;
+// OpenAI's streaming transcription takes 24 kHz PCM16. The batch fallback uses the same rate.
+export const voiceSampleRate = 24_000;
 export const maxVoiceSeconds = 12;
-export const minVoiceSamples = 1536;
+export const minVoiceSamples = 2304;
+export const voiceModel = "openai/gpt-transcribe";
+export const voiceProviderOptions = { openai: { languages: ["he"] } };
 const wavHeaderBytes = 44;
 export const maxVoiceBytes = wavHeaderBytes + 2 * voiceSampleRate * maxVoiceSeconds;
 
@@ -44,4 +47,14 @@ export function isVoiceClip(buffer: ArrayBuffer) {
     header.getUint32(28, true) === voiceSampleRate * 2 && header.getUint16(32, true) === 2 &&
     header.getUint16(34, true) === 16 && header.getUint32(40, true) === buffer.byteLength - wavHeaderBytes &&
     header.getUint32(4, true) === buffer.byteLength - 8 && buffer.byteLength % 2 === 0;
+}
+
+export function encodePcm16(frame: Float32Array) {
+  const bytes = new Uint8Array(frame.length * 2);
+  const view = new DataView(bytes.buffer);
+  frame.forEach((sample, index) => {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(index * 2, clamped * (clamped < 0 ? 32768 : 32767), true);
+  });
+  return bytes;
 }

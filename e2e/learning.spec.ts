@@ -112,61 +112,84 @@ test("imports a private CSV, exports the learner's data, and deletes the fixture
   await expect(page.getByLabel("חפיסה ללימוד")).toHaveCount(0);
 });
 
-async function installSpeechFixture(page: Page) {
+// A fake microphone: a tone that plays while the learner holds the mic. Counts every opening.
+async function installMicrophone(page: Page) {
   await page.addInitScript(() => {
-    const probe = { starts: 0, aborted: 0 };
-    Object.assign(window, { speechProbe: probe });
-    class SpeechFixture {
-      onaudiostart?: () => void;
-      onaudioend?: () => void;
-      onresult?: (event: { resultIndex: number; results: ArrayLike<unknown> }) => void;
-      onspeechend?: () => void;
-      onerror?: (event: { error: string }) => void;
-      onend?: () => void;
-      start() {
-        probe.starts++;
-        Object.assign(window, { fixtureSpeech: this });
-        queueMicrotask(() => this.onaudiostart?.());
-      }
-      abort() { probe.aborted++; }
-      stop() { this.onaudioend?.(); this.onspeechend?.(); }
-      silence() {
-        this.onaudioend?.();
-        this.onerror?.({ error: "no-speech" });
-        this.onend?.();
-      }
-    }
-    Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: SpeechFixture });
+    const NativeAudioContext = AudioContext;
+    const probe = { opens: 0, streams: [] as MediaStream[] };
+    Object.assign(window, { micProbe: probe });
+    navigator.mediaDevices.getUserMedia = async () => {
+      probe.opens++;
+      const context = new NativeAudioContext();
+      await context.resume();
+      const output = context.createMediaStreamDestination();
+      const tone = context.createOscillator();
+      const gain = context.createGain();
+      gain.gain.value = 0.25;
+      tone.connect(gain).connect(output);
+      tone.start();
+      probe.streams.push(output.stream);
+      output.stream.getTracks().forEach((track) => {
+        const stop = track.stop.bind(track);
+        track.stop = () => { stop(); void context.close(); };
+      });
+      return output.stream;
+    };
   });
 }
 
-test("judges an interim speech transcript at speech end and permits a single-tap timeout grade", async ({ page }) => {
-  await installSpeechFixture(page);
-  await signIn(page, "/learn", "spoken-judge@example.test");
+const micProbe = (page: Page) => page.evaluate(() => {
+  const { opens, streams } = (window as unknown as { micProbe: { opens: number; streams: MediaStream[] } }).micProbe;
+  return { opens, tracks: streams.flatMap((stream) => stream.getTracks().map((track) => track.readyState)) };
+});
+
+async function holdMic(page: Page, whileHeld: () => Promise<void>) {
+  const box = await page.getByRole("button", { name: /^מענה בקול · /u }).boundingBox();
+  if (!box) throw new Error("Mic button is not visible");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(page.getByText("מקשיב · שחררו לסיום", { exact: true })).toBeVisible();
+  await whileHeld();
+  await page.mouse.up();
+}
+
+async function openPractice(page: Page, email: string) {
+  await signIn(page, "/learn", email);
   await page.getByRole("button", { name: "התחלה או המשך" }).click();
   await page.getByRole("button", { name: "הבנתי", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
   await page.goto("/infinite");
-  await expect(page.getByRole("button", { name: "עצירת הקלטה" })).toBeVisible();
-  const paraphrase = "אבן שאיתה משחיזים סכינים להיות חדים יותר";
+}
+
+test("streams held speech to the gateway, judges it on release, and permits a single-tap timeout grade", async ({ page }) => {
+  await installMicrophone(page);
+  await openPractice(page, "spoken-judge@example.test");
+  const mic = page.getByRole("button", { name: /^מענה בקול · /u });
+  await expect(mic).toBeVisible();
+  await expect(page.getByText("ההקלטה נשלחת לתמלול בזמן ההחזקה.")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect((await micProbe(page)).opens).toBe(0);
+
+  await mic.click();
+  await expect(page.getByText("יש להחזיק את הכפתור בזמן הדיבור.")).toBeVisible();
+  expect(await micProbe(page)).toEqual({ opens: 1, tracks: ["ended"] });
+
   let judgeRequests = 0;
   page.on("request", (request) => { if (request.url().endsWith("/api/judge")) judgeRequests++; });
-  const interim = page.waitForResponse((response) => response.url().endsWith("/api/learn") &&
-    response.request().postDataJSON()?.input?.final === false);
-  await page.evaluate((transcript) => {
-    const speech = (window as unknown as {
-      fixtureSpeech: { onresult: (event: { resultIndex: number; results: unknown[] }) => void };
-    }).fixtureSpeech;
-    speech.onresult({ resultIndex: 0, results: [{ 0: { transcript }, length: 1, isFinal: false }] });
-  }, paraphrase);
-  expect((await (await interim).json()).accepted).toBe(false);
-  expect(judgeRequests).toBe(0);
-  await page.evaluate(() => {
-    (window as unknown as { fixtureSpeech: { onspeechend: () => void } }).fixtureSpeech.onspeechend();
+  await holdMic(page, async () => {
+    // The gateway answers the first streamed audio with a partial transcript while the mic is still held.
+    await expect(page.getByText("אבן", { exact: true })).toBeVisible();
+    await page.waitForTimeout(600);
+    expect(judgeRequests).toBe(0);
   });
   await expect(page.getByText(deck[0].definition, { exact: true })).toBeVisible();
   expect(judgeRequests).toBe(1);
+  expect(await micProbe(page)).toEqual({ opens: 2, tracks: ["ended", "ended"] });
 
+  await page.getByRole("button", { name: "לכרטיס הבא" }).click();
+  await expect(mic).toBeVisible();
+  await page.waitForTimeout(500);
+  expect((await micProbe(page)).opens).toBe(2);
   await page.getByRole("button", { name: "מענה בהקלדה" }).click();
   await page.getByLabel("התשובה שלך").fill("מבחן פסק זמן");
   await page.getByRole("button", { name: "בדיקה", exact: true }).click();
@@ -176,93 +199,19 @@ test("judges an interim speech transcript at speech end and permits a single-tap
   await expect(page.locator("[data-verdict]")).toHaveAttribute("data-verdict", "correct");
   const data = await (await page.request.post("/api/settings", { data: { action: "export" } })).json();
   expect(data.reviews).toEqual(expect.arrayContaining([
-    expect.objectContaining({ judge: expect.objectContaining({ model: "google/gemini-decision-1", status: "decided", input: paraphrase }) }),
+    expect.objectContaining({ input: "voice", correct: true, transcript: "אבן לחידוד סכינים" }),
     expect.objectContaining({ judge: expect.objectContaining({ status: "timeout", selfGrade: true }) }),
   ]));
 });
 
-test("stops listening on a wrong answer and lets the learner restart after silence", async ({ page }) => {
-  await installSpeechFixture(page);
-  await signIn(page, "/learn", "quiet-mic@example.test");
-  await page.getByRole("button", { name: "התחלה או המשך" }).click();
-  await page.getByRole("button", { name: "הבנתי", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
-  await page.goto("/infinite");
-  const micOn = page.getByText("המיקרופון פעיל", { exact: true });
-  const micOff = page.getByText("המיקרופון כבוי", { exact: true });
-  await expect(micOn).toBeVisible();
-  await page.clock.install();
-  await page.evaluate(() => {
-    (window as unknown as { fixtureSpeech: { silence: () => void } }).fixtureSpeech.silence();
-  });
-  await expect(micOff).toBeVisible();
-  await expect(page.getByText(/לא נקלט דיבור/u)).toBeVisible();
-  await page.clock.runFor(1500);
-  const started = () => page.evaluate(() => (window as unknown as { speechProbe: { starts: number } }).speechProbe.starts);
-  expect(await started()).toBe(1);
-
-  await page.getByRole("button", { name: "מענה בקול" }).click();
-  await expect(micOn).toBeVisible();
-  await page.getByRole("button", { name: "לא יודע", exact: true }).click();
-  const definition = page.getByText(deck[0].definition, { exact: true });
-  await expect(definition).toBeVisible();
-  await expect(micOff).toBeVisible();
-  await definition.click();
-  await page.clock.runFor(1500);
-  await expect(definition).toBeVisible();
-  expect(await started()).toBe(2);
-
-  await page.getByRole("button", { name: "לכרטיס הבא" }).click();
-  await expect(micOn).toBeVisible();
-  expect(await started()).toBe(3);
-});
-
-test("Android captures a quiet clip, releases the mic, and grades its transcription", async ({ page }) => {
-  await page.addInitScript(() => {
-    const NativeAudioContext = AudioContext;
-    Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Linux; Android 14) Chrome/152.0" });
-    const probe = { nativeStarts: 0, streams: [] as MediaStream[] };
-    Object.assign(window, { quietProbe: probe });
-    Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: class {
-      start() { probe.nativeStarts++; }
-      abort() {}
-    } });
-    navigator.mediaDevices.getUserMedia = async () => {
-      const context = new NativeAudioContext();
-      await context.resume();
-      const output = context.createMediaStreamDestination();
-      const tone = context.createOscillator();
-      const gain = context.createGain();
-      gain.gain.value = 0.25;
-      tone.connect(gain).connect(output);
-      tone.start(context.currentTime + 0.1);
-      tone.stop(context.currentTime + 0.45);
-      probe.streams.push(output.stream);
-      output.stream.getTracks().forEach((track) => {
-        const stop = track.stop.bind(track);
-        track.stop = () => { stop(); void context.close(); };
-      });
-      return output.stream;
-    };
-  });
-  await signIn(page, "/learn", "quiet-android@example.test");
-  await page.getByRole("button", { name: "התחלה או המשך" }).click();
-  await page.getByRole("button", { name: "הבנתי", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(deck[1].term);
-  await page.goto("/infinite");
-  await expect(page.getByText("הקלטות קצרות נשלחות לתמלול.")).toBeVisible();
-  const probe = () => page.evaluate(() => {
-    const { nativeStarts, streams } = (window as unknown as {
-      quietProbe: { nativeStarts: number; streams: MediaStream[] };
-    }).quietProbe;
-    return { nativeStarts, tracks: streams.flatMap((stream) => stream.getTracks().map((track) => track.readyState)) };
-  });
-  expect(await probe()).toEqual({ nativeStarts: 0, tracks: [] });
+test("uploads the held clip when the streaming socket fails", async ({ page }) => {
+  await installMicrophone(page);
+  await page.routeWebSocket(/\/gateway\/transcription-model/u, (socket) => socket.close());
+  await openPractice(page, "stream-fallback@example.test");
   const transcription = page.waitForResponse((response) => response.url().endsWith("/api/transcribe"));
-  await page.getByRole("button", { name: "מענה בקול", exact: true }).click();
-  await expect(page.getByText("המיקרופון פעיל", { exact: true })).toBeVisible();
+  await holdMic(page, () => page.waitForTimeout(700));
   expect((await transcription).status()).toBe(200);
   await expect(page.getByText(deck[0].definition, { exact: true })).toBeVisible();
   await expect(page.getByText("המיקרופון כבוי", { exact: true })).toBeVisible();
-  expect(await probe()).toEqual({ nativeStarts: 0, tracks: ["ended"] });
+  expect(await micProbe(page)).toEqual({ opens: 1, tracks: ["ended"] });
 });
