@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { decisionNudge, type AnswerInput, type AnswerReceipt, type Feedback, type MeaningInput, type StudyState } from "@/lib/learn/protocol";
 import { Icon } from "../icons";
 import ui from "../ui.module.css";
-import { Choices, Definition, Example, Nudge, Rule, StudyCard, Term } from "./card";
+import { feel } from "../feel";
+import { Choices, ContinueDisk, Definition, Example, Nudge, Rule, StudyCard, Term, Transcript } from "./card";
 import card from "./card.module.css";
 import { JudgeControls } from "./judge-controls";
 import { request } from "./request";
@@ -45,6 +46,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   const speechInFlight = useRef(false);
   const speechPending = useRef<{ promptId: string; input: AnswerInput } | null>(null);
   const lastSpoken = useRef("");
+  const streak = useRef(0);
   const judge = useJudge("learn");
 
   function showError(cause: unknown) {
@@ -69,6 +71,10 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
   }
 
   function accept(feedback: Feedback) {
+    if (active.current) {
+      streak.current = feedback.correct ? streak.current + 1 : 0;
+      feel(!feedback.correct ? "wrong" : feedback.decision === "partial" ? "partial" : "correct", { step: streak.current, gesture: true });
+    }
     active.current = null;
     judge.reset();
     speechPending.current = null;
@@ -171,14 +177,11 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
           </label>}
         </section> : result ? <StudyCard tone={tone} kind={prompt?.kind} verdict={tone}
           bottom={reverse && !result.correct ? <p className={card.ask}><b>{result.term}</b>. נחזור אליה בעוד כמה כרטיסים</p> : undefined}>
-          {reverse && <p className={card.ask}>{reverse.definition}</p>}
           <Term size="learn" ref={title}>{result.term}</Term>
           <Rule />
           <Definition>{result.definition}</Definition>
           {result.decision && decisionNudge(result.decision) && <Nudge>{decisionNudge(result.decision)}</Nudge>}
           <Example example={result.example} term={result.term} />
-          {prompt?.kind === "voice_meaning" && (spoken || value) &&
-            <p className={card.heard}>{spoken ? "אמרת" : "כתבת"}: <bdi>{spoken || value}</bdi></p>}
         </StudyCard> : !prompt ? <section className={styles.end}>
           <h1 ref={title} tabIndex={-1}>סיימת את מנת הלמידה</h1>
           <span className={styles.endNumber}>{state.total}</span>
@@ -191,6 +194,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
         </StudyCard> : prompt.kind === "voice_meaning" ? <StudyCard kind="voice_meaning" compact={useTyping}
           bottom={<button type="button" className={card.hintButton} disabled={busy || hintLevel >= 2}
             onClick={() => void run(async () => {
+              feel("tick", { gesture: true });
               setHint(await request<Hint>({ action: "hint", level: hintLevel + 1, promptId: prompt.id }));
             })}><Icon name="hint" size={18} />{hintLevel >= 2 ? "אין עוד רמזים" : `רמז · ${2 - hintLevel} נותרו`}</button>}>
           <h1 ref={title} tabIndex={-1} className={`${card.term} ${card.learnTerm}`}>{prompt.term}</h1>
@@ -207,7 +211,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
         </StudyCard>}
       </div>
 
-      <footer className={styles.controls} data-layout={!voicePrompt || result ? "end" : undefined}>
+      <footer className={styles.controls} data-layout={!voicePrompt || (result && reverse) ? "end" : undefined}>
         {error && <p className={styles.alert} role="alert">{error}</p>}
         {!state ? <>
           <button type="button" className={ui.primary} disabled={busy} onClick={() => void run(async () => {
@@ -216,14 +220,17 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
           })}>התחלה או המשך</button>
           <Link className={ui.quiet} href="/decks/import"><Icon name="upload" size={18} />ייבוא מילים</Link>
         </> : result ? <>
-          {reverse && <Choices choices={reverse.choices} picked={result.picked} answer={result.term} onPick={() => {}} />}
-          <button type="button" className={ui.primary} disabled={busy} onClick={() => void run(() => show("next"))}>הכרטיס הבא</button>
+          {reverse ? <Choices choices={reverse.choices} picked={result.picked} answer={result.term} onPick={() => {}} />
+            : <Transcript tone="dim">{spoken || value ? <>{spoken ? "אמרת" : "כתבת"}: <bdi>{spoken || value}</bdi></> : null}</Transcript>}
+          <ContinueDisk key={prompt?.id} tone={tone === "idle" ? "correct" : tone} from={reverse || useTyping ? "none" : "mic"} compact={Boolean(reverse)}
+            loadMs={tone === "wrong" ? 1100 : tone === "partial" ? 900 : 650} label="הכרטיס הבא" busy={busy}
+            onContinue={() => void run(() => show("next"))} />
         </> : !prompt ? <>
           <Link href="/infinite" className={ui.primary}>להמשיך לאינסופי</Link>
           {decks.length > 1 ? <button type="button" className={ui.quiet} onClick={() => setState(null)}>בחירת חפיסה</button>
             : <Link href="/" className={ui.quiet}>לסיים להיום</Link>}
         </> : prompt.kind === "intro" ? <button type="button" className={ui.primary} disabled={busy}
-          onClick={() => void run(() => submit({ kind: "continue" }))}>הבנתי</button>
+          onClick={() => { feel("next", { gesture: true }); void run(() => submit({ kind: "continue" })); }}>הבנתי</button>
           : reverse ? <Choices choices={reverse.choices} disabled={busy}
             onPick={(choice) => void run(() => submit({ kind: "tap", choice }))} />
           : judge.pending ? <JudgeControls pending={judge.pending} busy={judge.selfBusy} transcript={spoken || value}

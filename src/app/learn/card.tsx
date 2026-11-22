@@ -1,6 +1,10 @@
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode, Ref } from "react";
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode, type Ref } from "react";
 import { exampleParts } from "@/lib/learn/matcher";
+import { feel } from "../feel";
 import { Icon } from "../icons";
+import { Glyph, type GlyphShape } from "./glyph";
 import styles from "./card.module.css";
 
 export type Tone = "idle" | "correct" | "partial" | "wrong" | "milestone";
@@ -66,16 +70,20 @@ export function Tally({ count, large }: { count: number; large?: boolean }) {
   );
 }
 
-export type DiskState = "listening" | "rest" | "judging" | "countdown" | "continue" | "off";
+export type DiskState = "listening" | "rest" | "judging" | "off";
 
 const holdKeys = new Set([" ", "Enter"]);
 
-export function MicDisk({ state, tone = "correct", duration = 900, label, onClick, onPress, onRelease, disabled, runKey }: {
-  state: DiskState; tone?: Tone; duration?: number; label: string; onClick?: () => void; disabled?: boolean; runKey?: string;
+// The continue disk hands its arrows to the next card's mic disk, which morphs them back into the mic.
+let continuedAt = -Infinity;
+const handedOff = () => typeof performance !== "undefined" && performance.now() - continuedAt < 1500;
+
+export function MicDisk({ state, label, onClick, onPress, onRelease, disabled }: {
+  state: DiskState; label: string; onClick?: () => void; disabled?: boolean;
   /** Press-and-hold mode: onPress on the way down, onRelease when the pointer or key lifts. */
   onPress?: () => void; onRelease?: () => void;
 }) {
-  const icon = state === "countdown" ? "check" : state === "off" ? "micOff" : "mic";
+  const [initial] = useState<GlyphShape>(() => handedOff() ? "arrows" : "mic");
   const hold: ButtonHTMLAttributes<HTMLButtonElement> = onPress ? {
     onPointerDown: (event) => {
       if (event.button !== 0) return;
@@ -100,20 +108,97 @@ export function MicDisk({ state, tone = "correct", duration = 900, label, onClic
     onContextMenu: (event) => event.preventDefault(),
   } : { onClick };
   return (
-    <div className={styles.diskWrap} data-state={state} data-tone={tone}>
+    <div className={styles.diskWrap} data-state={state}>
       {state === "listening" && <><i aria-hidden="true" className={styles.wave} /><i aria-hidden="true" className={`${styles.wave} ${styles.late}`} /></>}
-      {state === "countdown" && <svg key={runKey} aria-hidden="true" className={styles.timer} viewBox="0 0 112 112"
-        style={{ "--duration": `${duration}ms` } as CSSProperties}>
-        <circle cx="56" cy="56" r="54" pathLength="100" className={styles.timerTrack} />
-        <circle cx="56" cy="56" r="54" pathLength="100" className={styles.timerArc} />
-      </svg>}
+      {state === "judging" && <Ring />}
       <button type="button" className={styles.disk} aria-label={label}
         aria-pressed={onPress ? state === "listening" : state === "listening" ? true : undefined}
         data-hold={onPress ? true : undefined} disabled={disabled} {...hold}>
-        <Icon name={icon} size={30} />
+        {state === "off" ? <Icon name="micOff" size={30} /> : <Glyph to="mic" initial={initial} />}
       </button>
     </div>
   );
+}
+
+function Ring({ duration }: { duration?: number }) {
+  return <svg aria-hidden="true" className={styles.ring} viewBox="0 0 112 112"
+    style={duration ? { "--load": `${duration}ms` } as CSSProperties : undefined}>
+    <circle cx="56" cy="56" r="54" pathLength="100" className={styles.ringTrack} />
+    <circle cx="56" cy="56" r="54" pathLength="100" className={styles.ringArc} />
+  </svg>;
+}
+
+const interactive = "input, textarea, select, button, a, [contenteditable]";
+
+/**
+ * After a verdict the thumb disk never moves on by itself. A ring loads around it while the card is
+ * read, then the mic folds into a double chevron that nudges twice toward the next card and waits
+ * for a tap (or Enter). With from="none" (no mic was there) the chevrons draw themselves in.
+ */
+export function ContinueDisk({ tone, from, loadMs, label, busy, compact, onContinue }: {
+  tone: Tone; from: "mic" | "none"; loadMs: number; label: string; busy?: boolean;
+  /** Under the answer choices, where height is short: a smaller disk and no hint line. */
+  compact?: boolean; onContinue: () => void;
+}) {
+  const [phase, setPhase] = useState<"loading" | "ready" | "nudge">("loading");
+  const [spinning, setSpinning] = useState(false);
+  const used = useRef(false);
+  const go = useRef(onContinue);
+  useEffect(() => { go.current = onContinue; }, [onContinue]);
+
+  useEffect(() => {
+    const quiet = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => setPhase("ready"), quiet ? Math.min(loadMs, 400) : loadMs);
+    return () => window.clearTimeout(timer);
+  }, [loadMs]);
+
+  useEffect(() => {
+    if (phase !== "nudge") return;
+    // Felt on each push of the nudge, which peaks at 18% and 58% of its 700 ms.
+    const timer = window.setTimeout(() => feel("nudge"), 126);
+    return () => window.clearTimeout(timer);
+  }, [phase]);
+
+  // A slow next card turns the ring into a spinner, but a fast one never flashes it.
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setTimeout(() => setSpinning(true), 150);
+    return () => { window.clearTimeout(timer); setSpinning(false); };
+  }, [busy]);
+
+  const ready = phase !== "loading" && !busy;
+  const proceed = useCallback(() => {
+    if (used.current) return;
+    used.current = true;
+    continuedAt = performance.now();
+    feel("next", { gesture: true });
+    go.current();
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    used.current = false;
+    function key(event: KeyboardEvent) {
+      if (event.key !== "Enter" || event.repeat || (event.target as Element | null)?.closest?.(interactive)) return;
+      event.preventDefault();
+      proceed();
+    }
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [ready, proceed]);
+
+  const arrived = useCallback(() => setPhase("nudge"), []);
+  return <>
+    <div className={styles.diskWrap} data-state="continue" data-tone={tone} data-phase={phase} data-busy={spinning || undefined}
+      data-size={compact ? "compact" : undefined}>
+      <Ring duration={loadMs} />
+      <button type="button" className={styles.disk} aria-label={label} disabled={!ready} onClick={proceed}>
+        {from === "mic" ? <Glyph initial="mic" to={phase === "loading" ? "mic" : "arrows"} onArrive={arrived} />
+          : phase !== "loading" ? <Glyph to="arrows" draw onArrive={arrived} /> : null}
+      </button>
+    </div>
+    {!compact && <p className={styles.continueHint} data-shown={phase === "nudge" || undefined}>הקישו להמשך</p>}
+  </>;
 }
 
 export function Transcript({ children, locked, struck, tone, live }: {

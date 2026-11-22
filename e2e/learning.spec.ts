@@ -54,6 +54,10 @@ test("signs in, learns five words, practices ten answers, and saves a private se
   for (let count = 0; count < 10; count++) {
     await waitForPrompt(page);
     await answer(page, await heading.innerText());
+    // Nothing moves on by itself: the card waits until the disk is tapped.
+    await page.waitForTimeout(count === 0 ? 1500 : 0);
+    await expect(page.locator("[data-verdict]")).toHaveAttribute("data-verdict", "correct");
+    if (count < 9) await page.getByRole("button", { name: "לכרטיס הבא" }).click();
   }
   await page.getByRole("button", { name: "סיום סשן" }).click();
   await expect(page).toHaveURL(/\/summary$/u);
@@ -212,6 +216,6 @@ test("uploads the held clip when the streaming socket fails", async ({ page }) =
   await holdMic(page, () => page.waitForTimeout(700));
   expect((await transcription).status()).toBe(200);
   await expect(page.getByText(deck[0].definition, { exact: true })).toBeVisible();
-  await expect(page.getByText("המיקרופון כבוי", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "לכרטיס הבא" })).toBeEnabled();
   expect(await micProbe(page)).toEqual({ opens: 1, tracks: ["ended"] });
 });

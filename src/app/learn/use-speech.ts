@@ -2,6 +2,7 @@
 
 import { createGateway, experimental_streamTranscribe as streamTranscribe } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { feel } from "../feel";
 import {
   encodePcm16, encodeVoiceClip, maxVoiceSeconds, minVoiceSamples, voiceModel, voiceProviderOptions, voiceSampleRate,
 } from "@/lib/learn/voice-audio";
@@ -139,6 +140,7 @@ export function useSpeech(
     if (capture.voiced < minVoiceSamples) {
       stop();
       setSpeechError(capture.samples < voiceSampleRate * 0.4 ? holdToTalk : noSpeech);
+      feel("error");
       return;
     }
     setPhase("finishing");
@@ -159,9 +161,15 @@ export function useSpeech(
       if (active.current !== capture) return;
       text = text.trim().slice(0, 300);
       if (text) listener.current([text], true);
-      else setSpeechError(noSpeech);
+      else {
+        setSpeechError(noSpeech);
+        feel("error");
+      }
     } catch {
-      if (active.current === capture) setSpeechError(failed);
+      if (active.current === capture) {
+        setSpeechError(failed);
+        feel("error");
+      }
     } finally {
       if (active.current === capture) stop();
     }
@@ -171,6 +179,7 @@ export function useSpeech(
     const capture = active.current;
     if (!capture || capture.released) return;
     capture.released = true;
+    feel("release", { gesture: true });
     // A release while the mic is still opening finishes once it opens.
     if (capture.worklet) void finish(capture);
   }, [finish]);
@@ -179,6 +188,7 @@ export function useSpeech(
     if (!enabled || !promptId || active.current) return;
     const capture: Capture = { controller: new AbortController(), frames: [], samples: 0, voiced: 0, released: false };
     active.current = capture;
+    feel("press");
     setSpeechError("");
     setPhase("opening");
     prepare();
@@ -248,6 +258,7 @@ export function useSpeech(
       if (active.current !== capture) return;
       stop();
       setSpeechError("המיקרופון אינו זמין כרגע. אפשר להקליד תשובה.");
+      feel("error");
     }
   }, [enabled, promptId, prepare, takeTicket, finish, release, stop]);
 

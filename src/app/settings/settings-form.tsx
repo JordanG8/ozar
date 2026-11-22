@@ -3,8 +3,9 @@
 import { createAuthClient } from "@neon/auth/next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import type { Preferences } from "@/lib/settings";
+import { feel, feelEnabled, setFeelEnabled, type FeelSetting } from "../feel";
 import { Icon } from "../icons";
 import { SectionLabel } from "../ui";
 import ui from "../ui.module.css";
@@ -39,6 +40,34 @@ function Stepper({ id, value, step, min, max, onChange }: {
       onChange={(event) => onChange(event.target.value === "" ? Number.NaN : Number(event.target.value))} />
     <button type="button" aria-label="הוספה" disabled={value >= max} onClick={() => onChange(clamp(value + step))}><Icon name="plus" /></button>
   </div>;
+}
+
+const feelChanged = "ozar:feel";
+function subscribeFeel(notify: () => void) {
+  window.addEventListener(feelChanged, notify);
+  window.addEventListener("storage", notify);
+  return () => {
+    window.removeEventListener(feelChanged, notify);
+    window.removeEventListener("storage", notify);
+  };
+}
+
+// Sound and vibration belong to the device, not the account, so they save locally and at once.
+function FeelToggle({ setting, label }: { setting: FeelSetting; label: string }) {
+  const enabled = useSyncExternalStore(subscribeFeel, () => feelEnabled(setting), () => true);
+  return <fieldset className={`${ui.row} ${styles.row} ${styles.fieldset}`}>
+    <legend className="visually-hidden">{label}</legend>
+    <span aria-hidden="true" className={styles.grow}>{label}</span>
+    <div className={styles.segment}>
+      {([[true, "פועל"], [false, "כבוי"]] as const).map(([value, text]) => <label key={text}>
+        <input type="radio" name={setting} checked={enabled === value} onChange={() => {
+          setFeelEnabled(setting, value);
+          window.dispatchEvent(new Event(feelChanged));
+          if (value) feel(setting === "sound" ? "correct" : "partial", { step: 5, gesture: true });
+        }} />{text}
+      </label>)}
+    </div>
+  </fieldset>;
 }
 
 export function SettingsForm({ preferences: initial, email }: { preferences: Preferences; email: string }) {
@@ -134,6 +163,10 @@ export function SettingsForm({ preferences: initial, email }: { preferences: Pre
         onChange={(event) => change("desiredRetention", Number(event.target.value) / 100)} />
       <p className={ui.meta}>גבוה יותר = זוכרים יותר, ויותר חזרות ביום</p>
     </div>
+
+    <SectionLabel>משוב</SectionLabel>
+    <FeelToggle setting="sound" label="צלילים" />
+    <FeelToggle setting="haptics" label="רטט" />
 
     <SectionLabel>נתונים</SectionLabel>
     <Link className={ui.row} href="/decks/import"><span>ייבוא מילים</span><span className={ui.rowIcon}><Icon name="chevron" size={18} /></span></Link>

@@ -27,9 +27,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  justify-content: safe center;
   gap: 1rem;
   text-align: center;
   min-height: 0;
+  /* A long definition on a short phone scrolls inside the card instead of spilling over the controls. */
+  overflow-y: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent);
 }
 .term {
   max-width: 100%;
@@ -93,7 +98,7 @@
 }
 .hintButton:disabled { color: var(--faint); }
 
-/* Mic disk: amber when listening, two hairline rings — the only looping motion. */
+/* Mic disk: amber when listening, two hairline rings; a spinner ring only while something loads. */
 .diskWrap { position: relative; width: 5.5rem; height: 5.5rem; flex: none; display: grid; place-items: center; margin-block: .75rem .5rem; }
 .disk {
   position: relative;
@@ -115,10 +120,6 @@
 .diskWrap[data-state="listening"] .disk { border-color: var(--accent); background: var(--accent); color: var(--background); }
 .diskWrap[data-state="judging"] .disk { color: var(--faint); }
 .diskWrap[data-state="off"] .disk { color: var(--faint); border-style: dashed; }
-.diskWrap[data-state="countdown"] .disk { border-color: transparent; }
-.diskWrap[data-state="countdown"][data-tone="correct"] .disk { color: var(--correct); }
-.diskWrap[data-state="countdown"][data-tone="partial"] .disk { color: var(--partial); }
-.diskWrap[data-state="countdown"][data-tone="milestone"] .disk { color: var(--accent); }
 .wave {
   position: absolute;
   inset: 0;
@@ -129,12 +130,43 @@
 }
 .late { animation-delay: .8s; }
 @keyframes wave { from { opacity: .45; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
-.timer { position: absolute; inset: -.75rem; width: calc(100% + 1.5rem); height: calc(100% + 1.5rem); transform: rotate(-90deg); fill: none; stroke-width: 2; pointer-events: none; }
-.timerTrack { stroke: var(--line); }
-.timerArc { stroke: var(--correct); stroke-linecap: round; stroke-dasharray: 100 100; stroke-dashoffset: 100; animation: fill var(--duration) linear forwards; }
-.diskWrap[data-tone="partial"] .timerArc { stroke: var(--partial); }
-.diskWrap[data-tone="milestone"] .timerArc { stroke: var(--accent); }
+
+/* Ring around the disk: fills while a verdict is read, spins while the next card or the judge loads. */
+.ring { position: absolute; inset: -.75rem; width: calc(100% + 1.5rem); height: calc(100% + 1.5rem); transform: rotate(-90deg); fill: none; stroke-width: 2; pointer-events: none; }
+.ringTrack { stroke: var(--line); }
+.ringArc { stroke: var(--disk-tone, var(--dim)); stroke-linecap: round; stroke-dasharray: 100 100; stroke-dashoffset: 100; animation: fill var(--load, 900ms) cubic-bezier(.45, .05, .25, 1) forwards; transition: stroke 180ms var(--ease); }
 @keyframes fill { to { stroke-dashoffset: 0; } }
+.diskWrap[data-state="judging"] .ring, .diskWrap[data-busy] .ring { animation: spin .9s linear infinite; }
+.diskWrap[data-state="judging"] .ringArc, .diskWrap[data-busy] .ringArc { stroke-dasharray: 22 78; stroke-dashoffset: 0; animation: none; }
+.diskWrap[data-state="judging"] .ringArc { stroke: var(--faint); }
+@keyframes spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+
+/* Continue: tone ring, then the mic folds into arrows that nudge toward the next card. */
+.diskWrap[data-state="continue"] { --disk-tone: var(--correct); }
+.diskWrap[data-tone="partial"] { --disk-tone: var(--partial); }
+.diskWrap[data-tone="wrong"] { --disk-tone: var(--wrong); }
+.diskWrap[data-tone="milestone"] { --disk-tone: var(--accent); }
+.diskWrap[data-state="continue"] .disk { border-color: transparent; color: var(--ink); transition: color 300ms var(--ease), transform 120ms var(--ease); }
+.diskWrap[data-state="continue"][data-phase="loading"] .disk { color: var(--faint); }
+.diskWrap[data-phase="ready"] .ring { animation: done 360ms var(--ease); }
+@keyframes done { 40% { transform: rotate(-90deg) scale(1.05); } }
+.diskWrap[data-phase="nudge"] [data-part="front"] { animation: nudge 720ms both; }
+.diskWrap[data-phase="nudge"] [data-part="back"] { animation: nudge 720ms 50ms both; }
+@keyframes nudge {
+  0% { transform: translateX(0); animation-timing-function: cubic-bezier(.3, 0, .1, 1); }
+  18% { transform: translateX(-3.5px); animation-timing-function: cubic-bezier(.5, 0, .3, 1); }
+  40% { transform: translateX(0); animation-timing-function: cubic-bezier(.3, 0, .1, 1); }
+  58% { transform: translateX(-2.75px); animation-timing-function: cubic-bezier(.5, 0, .3, 1); }
+  82%, 100% { transform: translateX(0); }
+}
+.diskWrap[data-size="compact"], .diskWrap[data-size="compact"] .disk { width: 4.5rem; height: 4.5rem; }
+.diskWrap[data-size="compact"] { margin-block: .75rem .25rem; }
+.diskWrap[data-size="compact"] .ring { inset: -.5rem; width: calc(100% + 1rem); height: calc(100% + 1rem); }
+.continueHint { min-height: 1.25rem; color: var(--dim); font-size: .8125rem; text-align: center; opacity: 0; transition: opacity 300ms var(--ease); }
+.continueHint[data-shown] { opacity: 1; }
+.disk svg[data-draw] path { stroke-dasharray: 1 1; stroke-dashoffset: 1; animation: draw 380ms var(--ease) forwards; }
+.disk svg[data-draw] [data-part="back"] path { animation-delay: 80ms; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
 
 /* Transcript: settled ink; while judging it locks and a hairline sweeps under it. */
 .transcript { min-height: 2.25rem; display: flex; flex-direction: column; align-items: center; max-width: 100%; }
@@ -142,7 +174,6 @@
 .transcript[data-tone="dim"] p { color: var(--dim); font-size: 1.0625rem; }
 .transcript s { color: var(--wrong); }
 .transcript[data-live] p { color: var(--dim); font-size: .9375rem; font-style: italic; font-weight: 400; }
-.heard { color: var(--dim); font-size: .9375rem; font-style: italic; text-align: center; overflow-wrap: anywhere; }
 .sweep { position: relative; width: 10.5rem; height: 1px; margin-top: .125rem; background: var(--line); overflow: hidden; }
 .sweep i { position: absolute; inset: 0; background: var(--dim); transform-origin: right; animation: sweep 1.5s linear forwards; }
 @keyframes sweep { from { transform: scaleX(0); } to { transform: scaleX(1); } }
@@ -170,6 +201,14 @@
   .rise, .hint, .tallyLarge, .milestoneNumber { animation: none; }
   .wave { animation: none; opacity: .4; transform: scale(1.2); }
   .late { display: none; }
-  .timerArc { animation-duration: 1ms; }
+  .ringArc { animation-duration: 1ms; }
+  .diskWrap[data-state="judging"] .ring, .diskWrap[data-busy] .ring { animation-duration: 2.4s; }
+  .diskWrap[data-phase]:not([data-busy]) .ring, .diskWrap [data-part] { animation: none; }
+  .diskWrap[data-size="compact"], .diskWrap[data-size="compact"] .disk { width: 4.5rem; height: 4.5rem; }
+.diskWrap[data-size="compact"] { margin-block: .75rem .25rem; }
+.diskWrap[data-size="compact"] .ring { inset: -.5rem; width: calc(100% + 1rem); height: calc(100% + 1rem); }
+.continueHint { min-height: 1.25rem; color: var(--dim); font-size: .8125rem; text-align: center; opacity: 0; transition: opacity 300ms var(--ease); }
+.continueHint[data-shown] { opacity: 1; }
+.disk svg[data-draw] path { animation: none; stroke-dashoffset: 0; }
   .sweep i { animation: none; transform: none; }
 }

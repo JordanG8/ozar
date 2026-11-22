@@ -6,7 +6,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { decisionNudge, type AnswerInput, type AnswerReceipt, type Feedback, type InfiniteState, type MeaningInput } from "@/lib/learn/protocol";
 import { Icon } from "../icons";
 import ui from "../ui.module.css";
-import { Choices, Definition, Example, MicDisk, Nudge, Rule, StudyCard, Tally, Term, Transcript, type Tone } from "../learn/card";
+import { feel } from "../feel";
+import { Choices, ContinueDisk, Definition, Example, MicDisk, Nudge, Rule, StudyCard, Tally, Term, Transcript, type Tone } from "../learn/card";
 import card from "../learn/card.module.css";
 import { JudgeControls } from "../learn/judge-controls";
 import { request } from "../learn/request";
@@ -16,31 +17,12 @@ import { VoiceControls } from "../learn/voice-controls";
 import styles from "../learn/study.module.css";
 
 const isMilestone = (combo: number) => combo === 10 || combo === 25 || combo === 50 || (combo > 50 && combo % 25 === 0);
-const advanceMs = { correct: 900, partial: 1800, milestone: 1600 };
+// How long the ring loads before the disk turns into "next": longer when there is more to read.
+const loadMs = { correct: 650, partial: 900, wrong: 1100, milestone: 900 };
 
 function clock(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function playFeedback(audio: AudioContext | null, correct: boolean, combo: number) {
-  const milestone = correct && isMilestone(combo);
-  navigator.vibrate?.(milestone ? [30, 35, 65] : correct ? 12 : 35);
-  if (audio?.state !== "running") return;
-  const base = correct ? 420 * 2 ** (Math.min(combo, 50) / 45) : 180;
-  const notes = milestone ? [base, base * 1.25, base * 1.5] : [base];
-  notes.forEach((frequency, index) => {
-    const start = audio.currentTime + index * .09;
-    const oscillator = audio.createOscillator();
-    const volume = audio.createGain();
-    oscillator.frequency.value = frequency;
-    volume.gain.setValueAtTime(.001, start);
-    volume.gain.exponentialRampToValueAtTime(correct ? .075 : .045, start + .014);
-    volume.gain.exponentialRampToValueAtTime(.001, start + .17);
-    oscillator.connect(volume).connect(audio.destination);
-    oscillator.start(start);
-    oscillator.stop(start + .18);
-  });
 }
 
 type Judgment = { promptId: string; disputed: boolean; correct: boolean };
@@ -70,7 +52,6 @@ export function Practice() {
   const lastHeard = useRef("");
   const lastPick = useRef<string | null>(null);
   const said = useRef("");
-  const audio = useRef<AudioContext | null>(null);
   const inputField = useRef<HTMLInputElement>(null);
   const prompt = state?.prompt;
   const voice = prompt?.kind === "voice_meaning" ? prompt.id : null;
@@ -108,8 +89,10 @@ export function Practice() {
   }, [resetJudge]);
 
   const advance = useCallback(() => {
-    if (result?.goalReached && !goalScreen) setGoalScreen(true);
-    else void next();
+    if (result?.goalReached && !goalScreen) {
+      setGoalScreen(true);
+      feel("goal");
+    } else void next();
   }, [result, goalScreen, next]);
 
   useEffect(() => {
@@ -119,36 +102,8 @@ export function Practice() {
   }, [next]);
 
   useEffect(() => {
-    if (!result?.correct || goalScreen) return;
-    const wait = isMilestone(result.combo) ? advanceMs.milestone : result.decision === "partial" ? advanceMs.partial : advanceMs.correct;
-    const timer = window.setTimeout(advance, wait);
-    return () => window.clearTimeout(timer);
-  }, [result, goalScreen, advance]);
-
-  useEffect(() => {
     if (useTyping && voice && !result && !judgePending) inputField.current?.focus();
   }, [useTyping, voice, result, judgePending]);
-
-  useEffect(() => {
-    function unlock() {
-      try {
-        if (window.AudioContext) {
-          audio.current ??= new AudioContext();
-          void audio.current.resume().catch(() => {});
-        }
-      } catch {
-        // Visual feedback works in browsers without Web Audio.
-      }
-    }
-    window.addEventListener("pointerdown", unlock);
-    window.addEventListener("keydown", unlock);
-    return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
-      void audio.current?.close();
-      audio.current = null;
-    };
-  }, []);
 
   function accept(id: string, receipt: AnswerReceipt, wasVoice: boolean) {
     if (!state || !receipt.feedback || active.current !== id) return;
@@ -158,7 +113,8 @@ export function Practice() {
     const correct = receipt.feedback.correct;
     const combo = correct ? state.combo + 1 : 0;
     const ms = receipt.responseMs ?? Math.max(0, Date.now() - cardStart);
-    playFeedback(audio.current, correct, combo);
+    feel(!correct ? "wrong" : isMilestone(combo) ? "milestone" : receipt.feedback.decision === "partial" ? "partial" : "correct",
+      { step: combo, gesture: true });
     setState({
       ...state, combo, best: Math.max(state.best, combo),
       answers: state.answers + 1, correct: state.correct + Number(correct), today: state.today + 1,
@@ -279,7 +235,6 @@ export function Practice() {
           <span className="visually-hidden">{result.term}: {result.definition}</span>
         </StudyCard> : result ? <StudyCard tone={tone} kind={prompt?.kind} verdict={cardTone}
           top={result.correct ? <Tally count={result.combo} /> : result.brokenAt > 0 ? <span>הרצף נעצר ב־{result.brokenAt}</span> : null}>
-          {reverse && <p className={card.ask}>{reverse.definition}</p>}
           <Term>{result.term}</Term>
           <Rule />
           <Definition>{result.definition}</Definition>
@@ -303,18 +258,14 @@ export function Practice() {
       <footer className={styles.controls} data-layout={reverse || goalScreen || (state && !prompt) ? "end" : undefined}>
         {error && <p className={styles.alert} role="alert">{error}</p>}
         {goalScreen ? <>
-          <button type="button" className={ui.primary} onClick={() => void next()}>להמשיך באינסופי</button>
+          <button type="button" className={ui.primary} onClick={() => { feel("next", { gesture: true }); void next(); }}>להמשיך באינסופי</button>
           <button type="button" className={ui.quiet} onClick={end}>מספיק להיום</button>
         </> : result ? <>
           {reverse ? <Choices choices={reverse.choices} picked={result.picked} answer={result.term} onPick={() => {}} />
             : result.correct ? <Transcript tone="dim">{result.spoken}</Transcript>
             : <Transcript tone="dim">{result.spoken ? <>אמרת: <s>{result.spoken}</s></> : null}</Transcript>}
-          {reverse ? <button type="button" className={ui.quiet} disabled={loading} onClick={() => { speech.stop(); void next(); }}>לכרטיס הבא</button>
-            : <MicDisk state={result.correct ? "countdown" : "continue"} runKey={prompt?.id}
-              tone={tone === "milestone" ? "milestone" : result.decision === "partial" ? "partial" : "correct"}
-              duration={isMilestone(result.combo) ? advanceMs.milestone : result.decision === "partial" ? advanceMs.partial : advanceMs.correct}
-              label="לכרטיס הבא" disabled={loading} onClick={() => { speech.stop(); advance(); }} />}
-          {!reverse && <p className={styles.status} role="status">{speech.micStatus}</p>}
+          <ContinueDisk key={prompt?.id} tone={tone} from={reverse || useTyping ? "none" : "mic"} compact={Boolean(reverse)} loadMs={loadMs[tone === "idle" ? "correct" : tone]}
+            label="לכרטיס הבא" busy={loading} onContinue={advance} />
           {judgment && <button type="button" className={styles.flag} disabled={flagging} aria-pressed={judgment.disputed}
             onClick={() => void flag()}>{judgment.disputed ? "הדיווח נשמר · ביטול" :
               judgment.correct ? "הזיהוי אישר תשובה שגויה?" : "הזיהוי פסל תשובה נכונה?"}</button>}
