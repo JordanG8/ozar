@@ -209,6 +209,8 @@ export function Practice() {
     if (!voice || active.current !== voice) return;
     if (ended) {
       queue.current = [];
+      said.current = alternatives[0];
+      setSpoken(alternatives[0]);
       void submitMeaning({ kind: "voice", alternatives, final: true });
       return;
     }

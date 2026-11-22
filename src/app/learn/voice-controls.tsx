@@ -36,7 +36,7 @@ export function VoiceControls({ speech, typing, value, field, spoken, busy, inpu
 
   const error = !spoken && speech.speechError;
   return <>
-    <Transcript tone={error ? "dim" : undefined}>{spoken || speech.speechError}</Transcript>
+    <Transcript tone={error ? "dim" : undefined} live={Boolean(spoken)}>{spoken || speech.speechError}</Transcript>
     <MicDisk state={speech.recording ? "listening" : speech.finishing ? "judging" : "rest"}
       label="מענה בקול · יש ללחוץ ולהחזיק" disabled={busy || speech.finishing}
       onPress={() => void speech.press()} onRelease={speech.release} />

@@ -116,11 +116,12 @@ export function MicDisk({ state, tone = "correct", duration = 900, label, onClic
   );
 }
 
-export function Transcript({ children, locked, struck, tone }: {
-  children?: ReactNode; locked?: boolean; struck?: boolean; tone?: "dim" | "wrong";
+export function Transcript({ children, locked, struck, tone, live }: {
+  children?: ReactNode; locked?: boolean; struck?: boolean; tone?: "dim" | "wrong"; live?: boolean;
 }) {
   return (
-    <div className={styles.transcript} data-locked={locked} data-tone={tone}>
+    <div className={styles.transcript} data-locked={locked} data-tone={tone} data-live={live || undefined}
+      aria-live={live ? "polite" : undefined}>
       <p>{struck ? <s>{children}</s> : children}</p>
       {locked && <div aria-hidden="true" className={styles.sweep}><i /></div>}
     </div>

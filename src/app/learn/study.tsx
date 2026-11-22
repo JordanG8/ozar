@@ -95,6 +95,7 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
     if (!voicePrompt || active.current !== voicePrompt) return;
     if (ended) {
       speechPending.current = null;
+      setSpoken(alternatives[0]);
       await submitMeaning({ kind: "voice", alternatives, final: true });
       return;
     }
@@ -176,6 +177,8 @@ export function Study({ decks, initialDeck }: { decks: Deck[]; initialDeck?: str
           <Definition>{result.definition}</Definition>
           {result.decision && decisionNudge(result.decision) && <Nudge>{decisionNudge(result.decision)}</Nudge>}
           <Example example={result.example} term={result.term} />
+          {prompt?.kind === "voice_meaning" && (spoken || value) &&
+            <p className={card.heard}>{spoken ? "אמרת" : "כתבת"}: <bdi>{spoken || value}</bdi></p>}
         </StudyCard> : !prompt ? <section className={styles.end}>
           <h1 ref={title} tabIndex={-1}>סיימת את מנת הלמידה</h1>
           <span className={styles.endNumber}>{state.total}</span>
